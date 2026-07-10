@@ -1,0 +1,19 @@
+# build output
+/bin/
+/deuception
+
+# stray binaries from `go build ./cmd/...`
+/server
+/preview
+/sshprobe
+
+# host key
+/.ssh/
+
+# logs, coverage, generated preview dump
+*.log
+*.out
+/ui-preview.txt
+
+# macOS
+.DS_Store
