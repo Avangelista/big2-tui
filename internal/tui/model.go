@@ -167,8 +167,15 @@ func (m *Model) updatePile(s protocol.StateSnapshot) tea.Cmd {
 	if sameHand(m.pileCur, s.Table) {
 		return nil // same play still on the table
 	}
-	m.pilePrev = m.pileCur // the beaten play, covered as the new one slides over it
+	prev := m.pileCur
 	m.pileCur = append([]game.Card(nil), s.Table...)
+	// Cover the beaten play only when it is the same size (guaranteed within a
+	// trick). A size change means the trick reset without us seeing the empty-table
+	// snapshot, so there is nothing to cover.
+	m.pilePrev = nil
+	if len(prev) == len(m.pileCur) {
+		m.pilePrev = prev
+	}
 	dx, dy := 0, 0
 	if s.TableBy >= 0 {
 		n := len(s.Players)

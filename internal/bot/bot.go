@@ -48,13 +48,7 @@ func ChooseMove(g *game.GameState, seat game.Seat, level int, rng *rand.Rand) Mo
 	if endgame {
 		return Move{Cards: mostCards(plays).Cards} // empty out as fast as possible
 	}
-	best := cheapest(plays)
-	if isLone2(best) {
-		if alt, ok := cheapestExcept(plays, isLone2); ok {
-			best = alt // don't lead a lone 2 while there's a cheaper option
-		}
-	}
-	return Move{Cards: best.Cards}
+	return Move{Cards: cheapest(plays).Cards} // shed the lowest single (never a lone 2 here)
 }
 
 // weaker orders by fewest cards, then by strength.
@@ -73,20 +67,6 @@ func cheapest(plays []game.Combo) game.Combo {
 		}
 	}
 	return best
-}
-
-func cheapestExcept(plays []game.Combo, skip func(game.Combo) bool) (game.Combo, bool) {
-	var best game.Combo
-	found := false
-	for _, p := range plays {
-		if skip(p) {
-			continue
-		}
-		if !found || weaker(p, best) {
-			best, found = p, true
-		}
-	}
-	return best, found
 }
 
 func mostCards(plays []game.Combo) game.Combo {

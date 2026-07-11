@@ -234,11 +234,31 @@ func (r *Room) handleLeave(id string) {
 	seat := r.seats[idx]
 	if r.phase == protocol.Waiting {
 		r.seats = append(r.seats[:idx], r.seats[idx+1:]...)
+		if seat.Host {
+			r.promoteHost() // the host left the lobby; hand off so the room stays startable
+		}
 		r.fanout()
 		return
 	}
 	seat.Connected = false
 	r.afterTransition()
+}
+
+// promoteHost grants host to the first remaining connected human seat when no seat
+// holds it (e.g. the host left the waiting room). Bots never host. No-op if a host
+// remains or none can be promoted.
+func (r *Room) promoteHost() {
+	for _, s := range r.seats {
+		if s.Host {
+			return
+		}
+	}
+	for _, s := range r.seats {
+		if s.Connected && !s.Bot {
+			s.Host = true
+			return
+		}
+	}
 }
 
 // afterTransition runs after any state change: fast-forward disconnected humans
@@ -444,19 +464,18 @@ func (r *Room) applyEvents(evs []game.Event) {
 	// The table view carries all live state; only the end-of-hand event needs
 	// handling here.
 	for _, e := range evs {
-		if ev, ok := e.(game.GameWonEvent); ok {
-			r.handleGameWon(ev)
+		if _, ok := e.(game.GameWonEvent); ok {
+			r.handleGameWon()
 		}
 	}
 }
 
-func (r *Room) handleGameWon(ev game.GameWonEvent) {
+func (r *Room) handleGameWon() {
 	scores := r.game.HandScores()
 	for i := range r.seats {
 		r.seats[i].Score += scores[i]
 	}
 	r.phase = protocol.Finished
-	_ = ev
 }
 
 // fanout pushes a per-viewer redacted snapshot to every connected seat, bumping

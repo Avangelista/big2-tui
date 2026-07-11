@@ -220,6 +220,54 @@ func TestDisconnectAutoAdvance(t *testing.T) {
 	}
 }
 
+// TestMultiDisconnectAutoAdvance drops two adjacent seats mid-game and drives only
+// the remaining connected players. The actor must fast-forward through BOTH
+// disconnected seats every time the turn reaches them; if it ever left the turn on
+// a disconnected seat the driver would catch the stall (unlike playOutHand, which
+// would mask it by playing the disconnected seat itself).
+func TestMultiDisconnectAutoAdvance(t *testing.T) {
+	r := New(4, 3, mrand.New(mrand.NewSource(21)))
+	ids := joinStart(r, 4)
+	r.Submit(DisconnectCmd{ID: ids[1]})
+	r.Submit(DisconnectCmd{ID: ids[2]})
+
+	for iter := 0; iter < 2000; iter++ {
+		snap := r.Query(ids[0])
+		if snap.Phase == protocol.Finished {
+			return
+		}
+		turn := snap.Turn
+		if !snap.Players[turn].Connected {
+			t.Fatalf("turn stalled on disconnected seat %d; auto-advance did not fast-forward", turn)
+		}
+		turnID := ids[turn]
+		view := r.Query(turnID)
+		hand := view.YourHand
+		if len(view.Table) == 0 {
+			r.Submit(PlayCmd{ID: turnID, Cards: []game.Card{hand[0]}}) // lead lowest
+			continue
+		}
+		if len(view.Table) == 1 {
+			tbl, _ := game.Classify(view.Table, game.SimpleStraight)
+			played := false
+			for _, c := range hand {
+				cc, _ := game.Classify([]game.Card{c}, game.SimpleStraight)
+				if cc.Beats(tbl) {
+					r.Submit(PlayCmd{ID: turnID, Cards: []game.Card{c}})
+					played = true
+					break
+				}
+			}
+			if !played {
+				r.Submit(PassCmd{ID: turnID})
+			}
+			continue
+		}
+		r.Submit(PassCmd{ID: turnID}) // never beat a multi-card lead
+	}
+	t.Fatal("game with two disconnected players did not finish; likely stalled")
+}
+
 // TestTwoPlayerGame verifies a 2-player game starts (17 each, 34 in play) and
 // runs to completion.
 func TestTwoPlayerGame(t *testing.T) {

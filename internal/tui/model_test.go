@@ -214,3 +214,167 @@ func TestStaleSnapshotIgnored(t *testing.T) {
 		t.Fatalf("a stale (lower-rev) snapshot must be ignored, got %v", m.snap.YourHand)
 	}
 }
+
+// TestWindowIndices pins the cursor-centred hand-window math: centre, clamp at both
+// ends, and the moreLeft/moreRight scroll flags.
+func TestWindowIndices(t *testing.T) {
+	tests := []struct {
+		n, cursor, maxCells int
+		start, end          int
+		left, right         bool
+	}{
+		{13, 0, 5, 0, 5, false, true},   // at the left end
+		{13, 12, 5, 8, 13, true, false}, // at the right end
+		{13, 6, 5, 4, 9, true, true},    // centred, both flags
+		{4, 2, 5, 0, 4, false, false},   // whole hand fits
+	}
+	for _, tc := range tests {
+		start, end, left, right := windowIndices(tc.n, tc.cursor, tc.maxCells)
+		if start != tc.start || end != tc.end || left != tc.left || right != tc.right {
+			t.Errorf("windowIndices(%d,%d,%d) = (%d,%d,%v,%v), want (%d,%d,%v,%v)",
+				tc.n, tc.cursor, tc.maxCells, start, end, left, right,
+				tc.start, tc.end, tc.left, tc.right)
+		}
+	}
+}
+
+// fourPTableSnap is a 4-player in-game snapshot (you at seat 0) with table played
+// by tableBy - used to drive the horizontal side-opponent slides.
+func fourPTableSnap(rev int, yourHand, table []game.Card, tableBy int) protocol.StateSnapshot {
+	return protocol.StateSnapshot{
+		Phase:   protocol.InGame,
+		Rev:     rev,
+		YouSeat: 0,
+		Players: []protocol.PlayerView{
+			{Seat: 0, IsYou: true, CardCount: len(yourHand), Connected: true},
+			{Seat: 1, CardCount: 5, Connected: true},
+			{Seat: 2, CardCount: 6, Connected: true},
+			{Seat: 3, CardCount: 5, Connected: true},
+		},
+		YourHand: yourHand,
+		Table:    table,
+		TableBy:  tableBy,
+		Turn:     0,
+		Winner:   -1,
+	}
+}
+
+// TestPileSelfPlaySlidesUp: when you play (TableBy == YouSeat, dir {0,1}) the pile
+// slides up from the bottom edge into centre.
+func TestPileSelfPlaySlidesUp(t *testing.T) {
+	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	hand := parseHand(t, "4D 4H 5C 8D TS JH 2S")
+	m.Update(protocol.StateSnapshotMsg{Snap: tableSnap(1, hand, parseHand(t, "6H 6S"), 0)})
+	if m.pileDir != [2]int{0, 1} {
+		t.Fatalf("self-play direction = %v, want {0,1}", m.pileDir)
+	}
+	rowOf := func() int {
+		for r, line := range splitLines(m.View()) {
+			if indexOf(line, "|6H") >= 0 {
+				return r
+			}
+		}
+		return -1
+	}
+	firstRow, lastRow := -1, -1
+	for m.pileStep < pileSteps {
+		m.Update(pileAnimMsg{gen: m.pileGen})
+		if r := rowOf(); r >= 0 {
+			if firstRow == -1 {
+				firstRow = r
+			}
+			if lastRow != -1 && r > lastRow {
+				t.Fatalf("card moved down (%d -> %d); a self play should slide up", lastRow, r)
+			}
+			lastRow = r
+		}
+	}
+	if firstRow == -1 {
+		t.Fatal("self-play card never slid into view")
+	}
+	if lastRow >= firstRow {
+		t.Fatalf("card did not slide up: first visible row %d, end row %d", firstRow, lastRow)
+	}
+}
+
+// TestPileHorizontalSlides: a side opponent's play slides in horizontally from its
+// edge - the right seat slides left, the left seat slides right.
+func TestPileHorizontalSlides(t *testing.T) {
+	hand := parseHand(t, "4D 4H 5C 8D TS JH 2S")
+	table := parseHand(t, "6H 6S")
+	colOf := func(m *Model) int {
+		best := -1
+		for _, line := range splitLines(m.View()) {
+			if i := indexOf(line, "|6H"); i >= 0 && (best == -1 || i < best) {
+				best = i
+			}
+		}
+		return best
+	}
+	run := func(tableBy int, wantDir [2]int, leftward bool) {
+		m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+		m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+		m.Update(protocol.StateSnapshotMsg{Snap: fourPTableSnap(1, hand, table, tableBy)})
+		if m.pileDir != wantDir {
+			t.Fatalf("tableBy %d: dir = %v, want %v", tableBy, m.pileDir, wantDir)
+		}
+		first, last := -1, -1
+		for m.pileStep < pileSteps {
+			m.Update(pileAnimMsg{gen: m.pileGen})
+			if c := colOf(m); c >= 0 {
+				if first == -1 {
+					first = c
+				}
+				last = c
+			}
+		}
+		if first == -1 {
+			t.Fatalf("tableBy %d: card never slid into view", tableBy)
+		}
+		if leftward && last >= first {
+			t.Fatalf("tableBy %d: expected leftward slide, first col %d end %d", tableBy, first, last)
+		}
+		if !leftward && last <= first {
+			t.Fatalf("tableBy %d: expected rightward slide, first col %d end %d", tableBy, first, last)
+		}
+	}
+	run(3, [2]int{1, 0}, true)   // right opponent -> slides left into centre
+	run(1, [2]int{-1, 0}, false) // left opponent -> slides right into centre
+}
+
+// TestOffTurnScrollClamps: off turn, scrolling a hand wider than the screen keeps
+// m.scroll within [0, len-maxHandCells], and widening re-clamps it back into range.
+func TestOffTurnScrollClamps(t *testing.T) {
+	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 24}) // narrow: not all cards fit
+
+	hand := parseHand(t, "3D 3C 4D 4H 5S 7C 7H 9D TS JC QH KD 2S") // 13 cards
+	snap := inGameSnap(1, hand)
+	snap.Players = []protocol.PlayerView{
+		{Seat: 0, IsYou: true, CardCount: len(hand)},
+		{Seat: 1, IsTurn: true, CardCount: 5},
+	}
+	snap.Turn = 1 // seat 1 is on turn, so we are off turn
+	m.Update(protocol.StateSnapshotMsg{Snap: snap})
+	if m.isMyTurn() {
+		t.Fatal("setup: viewer should be off turn")
+	}
+
+	for i := 0; i < 30; i++ {
+		m.Update(tea.KeyMsg{Type: tea.KeyRight})
+		if maxS := len(hand) - m.maxHandCells(); m.scroll > maxS || m.scroll < 0 {
+			t.Fatalf("scroll %d out of range [0,%d] after right #%d", m.scroll, maxS, i)
+		}
+	}
+	if m.scroll == 0 {
+		t.Fatal("off-turn right never scrolled; window may be too wide for the test")
+	}
+
+	// Widen enough that the whole hand fits: scroll must re-clamp to 0.
+	m.Update(tea.WindowSizeMsg{Width: 200, Height: 24})
+	if m.scroll != 0 {
+		t.Fatalf("scroll should re-clamp to 0 when the hand fits, got %d", m.scroll)
+	}
+}

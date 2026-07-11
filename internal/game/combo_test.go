@@ -98,6 +98,12 @@ func TestBeats(t *testing.T) {
 		// straights compared by top card
 		{"straight to ace beats to king", "TD JC QH KS AD", "9D TC JH QS KD", true},
 		{"straight to two beats to ace", "JD QC KH AS 2D", "TD JC QH KS AD", true},
+		// straights with the same top rank -> the top card's suit breaks the tie
+		{"straight same top, higher suit wins", "3D 4C 5H 6S 7C", "3S 4H 5D 6C 7D", true},
+		{"straight same top, lower suit loses", "3S 4H 5D 6C 7D", "3D 4C 5H 6S 7C", false},
+		// straight flushes with the same top rank -> top card's suit breaks the tie
+		{"straight flush same top, higher suit wins", "3S 4S 5S 6S 7S", "3D 4D 5D 6D 7D", true},
+		{"straight flush same top, lower suit loses", "3D 4D 5D 6D 7D", "3S 4S 5S 6S 7S", false},
 		// flush rank-first: higher top card wins regardless of suit
 		{"flush higher top rank wins", "3D 5D 7D 9D KD", "4H 6H 8H TH QH", true},
 		// flush same ranks -> suit of top card breaks tie

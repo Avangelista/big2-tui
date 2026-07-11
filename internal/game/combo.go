@@ -101,15 +101,15 @@ func Classify(cards []Card, sc StraightChecker) (Combo, error) {
 func classifyFive(cs []Card, sc StraightChecker) (Combo, error) {
 	flush := sameSuit(cs)
 	straight, high := sc(cs)
-	switch {
-	case straight && flush:
+	if straight && flush {
 		return Combo{Type: StraightFlush, Cards: cs, Key: high}, nil
 	}
-	if r, ok := nOfAKind(cs, 4); ok {
+	counts := rankCounts(cs) // counted once, shared by the checks below
+	if r, ok := nOfAKind(counts, 4); ok {
 		return Combo{Type: FourKind, Cards: cs, Key: Card{Rank: r, Suit: Spade}}, nil
 	}
-	if isFullHouse(cs) {
-		return Combo{Type: FullHouse, Cards: cs, Key: Card{Rank: tripleRank(cs), Suit: Spade}}, nil
+	if isFullHouse(counts) {
+		return Combo{Type: FullHouse, Cards: cs, Key: Card{Rank: tripleRank(counts), Suit: Spade}}, nil
 	}
 	if flush {
 		return Combo{Type: Flush, Cards: cs, Key: cs[4]}, nil
@@ -176,8 +176,8 @@ func rankCounts(cs []Card) map[Rank]int {
 	return m
 }
 
-func nOfAKind(cs []Card, n int) (Rank, bool) {
-	for r, cnt := range rankCounts(cs) {
+func nOfAKind(counts map[Rank]int, n int) (Rank, bool) {
+	for r, cnt := range counts {
 		if cnt == n {
 			return r, true
 		}
@@ -185,8 +185,7 @@ func nOfAKind(cs []Card, n int) (Rank, bool) {
 	return 0, false
 }
 
-func isFullHouse(cs []Card) bool {
-	counts := rankCounts(cs)
+func isFullHouse(counts map[Rank]int) bool {
 	if len(counts) != 2 {
 		return false
 	}
@@ -202,8 +201,8 @@ func isFullHouse(cs []Card) bool {
 	return has3 && has2
 }
 
-func tripleRank(cs []Card) Rank {
-	for r, cnt := range rankCounts(cs) {
+func tripleRank(counts map[Rank]int) Rank {
+	for r, cnt := range counts {
 		if cnt == 3 {
 			return r
 		}

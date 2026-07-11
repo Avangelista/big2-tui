@@ -9,6 +9,89 @@ import (
 	"github.com/Avangelista/deuception/internal/protocol"
 )
 
+// TestBotActStaleTokenIgnored: a BotActCmd whose Token no longer matches the room's
+// turnToken must be a no-op even when its seat/turn are correct, so a late timer
+// can't double-play. botDelay is frozen so we inject the command deterministically.
+func TestBotActStaleTokenIgnored(t *testing.T) {
+	r := New(4, 2, mrand.New(mrand.NewSource(5)))
+	r.botDelay = time.Hour // freeze the real scheduler; we inject BotActCmds ourselves
+
+	host := NewID()
+	r.Submit(JoinCmd{ID: host, Host: true})
+	r.Submit(AddBotCmd{ID: host, Level: 5})
+	r.Submit(AddBotCmd{ID: host, Level: 5})
+	r.Submit(StartCmd{ID: host})
+
+	snap := r.Query(host)
+	if snap.Phase != protocol.InGame {
+		t.Fatalf("game did not start: %v", snap.Phase)
+	}
+	// If the human opens, play the opener (lowest card, a legal single) so the turn
+	// lands on a bot seat.
+	if snap.Turn == snap.YouSeat {
+		r.Submit(PlayCmd{ID: host, Cards: snap.YourHand[:1]})
+		snap = r.Query(host)
+	}
+	botSeat := snap.Turn
+	if !snap.Players[botSeat].IsBot {
+		t.Fatalf("expected a bot on turn, seat %d is not a bot", botSeat)
+	}
+
+	before := r.Query(host)
+	// turnToken only ever increments from 0, so -1 can never be current.
+	r.Submit(BotActCmd{Seat: botSeat, Token: -1})
+	after := r.Query(host)
+
+	if after.Turn != before.Turn {
+		t.Fatalf("stale BotActCmd advanced the turn: %d -> %d", before.Turn, after.Turn)
+	}
+	for i := range before.Players {
+		if before.Players[i].CardCount != after.Players[i].CardCount {
+			t.Fatalf("stale BotActCmd changed seat %d hand: %d -> %d",
+				i, before.Players[i].CardCount, after.Players[i].CardCount)
+		}
+	}
+}
+
+// TestHostLeavesLobbyPromotes: when the host leaves the waiting room, a remaining
+// player is promoted so the room stays startable (regression: serve-only orphan).
+func TestHostLeavesLobbyPromotes(t *testing.T) {
+	r := New(4, 2, mrand.New(mrand.NewSource(9)))
+	// Mirror serve-only: nobody claims Host, so the first joiner becomes host.
+	a, b, c := NewID(), NewID(), NewID()
+	r.Submit(JoinCmd{ID: a})
+	r.Submit(JoinCmd{ID: b})
+	r.Submit(JoinCmd{ID: c})
+	if !r.Query(a).IsHost {
+		t.Fatal("first joiner should be host")
+	}
+
+	r.Submit(DisconnectCmd{ID: a}) // host leaves the lobby
+
+	// Exactly one of the remaining seats must now be host, and it can start the game.
+	sb, sc := r.Query(b), r.Query(c)
+	hosts := 0
+	for _, p := range sb.Players {
+		if p.IsHost {
+			hosts++
+		}
+	}
+	if hosts != 1 {
+		t.Fatalf("after host left, host count = %d, want 1", hosts)
+	}
+	newHostID := b
+	if !sb.IsHost {
+		newHostID = c
+		if !sc.IsHost {
+			t.Fatal("no remaining seat was promoted to host")
+		}
+	}
+	r.Submit(StartCmd{ID: newHostID})
+	if got := r.Query(newHostID).Phase; got != protocol.InGame {
+		t.Fatalf("promoted host could not start the game; phase = %v", got)
+	}
+}
+
 func countBots(s protocol.StateSnapshot) int {
 	n := 0
 	for _, p := range s.Players {
