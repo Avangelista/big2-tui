@@ -160,7 +160,9 @@ const (
 // of the player who made it, opaquely covering the play it beat (both are the same
 // size within a trick). An empty table or a non-playing phase clears the pile.
 func (m *Model) updatePile(s protocol.StateSnapshot) tea.Cmd {
-	if s.Phase != protocol.InGame || len(s.Table) == 0 {
+	// Clear only when there is nothing to show. A finished hand keeps its winning
+	// play on the table, so let it slide in before the scoreboard replaces the board.
+	if len(s.Table) == 0 || s.Phase == protocol.Waiting {
 		m.pileCur, m.pilePrev, m.pileDir, m.pileStep = nil, nil, [2]int{}, 0
 		return nil
 	}
@@ -408,9 +410,19 @@ func (m *Model) viewContent() string {
 	case protocol.InGame:
 		return m.renderGame()
 	case protocol.Finished:
+		if m.winSlideActive() {
+			return m.renderGame() // hold the board while the winning play slides in
+		}
 		return m.renderOver()
 	}
 	return ""
+}
+
+// winSlideActive reports that the hand just ended and the winning play is still
+// sliding into the pile, so the board should hold a beat before the scoreboard.
+func (m *Model) winSlideActive() bool {
+	return m.snap != nil && m.snap.Phase == protocol.Finished &&
+		len(m.pileCur) > 0 && m.pileStep < pileSteps
 }
 
 func (m *Model) center(s string) string {

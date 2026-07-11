@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -342,6 +343,58 @@ func TestPileHorizontalSlides(t *testing.T) {
 	}
 	run(3, [2]int{1, 0}, true)   // right opponent -> slides left into centre
 	run(1, [2]int{-1, 0}, false) // left opponent -> slides right into centre
+}
+
+// TestWinningPlayAnimatesThenScoreboard: a game-winning play arrives as a finished
+// snapshot with the winning card still on the table. The board holds while the card
+// slides in, then the view switches to the scoreboard once it settles.
+func TestWinningPlayAnimatesThenScoreboard(t *testing.T) {
+	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// A play is on the table and settled; then you empty your hand and win.
+	m.Update(protocol.StateSnapshotMsg{Snap: tableSnap(1, parseHand(t, "2S"), parseHand(t, "3D"), 1)})
+	m.SettlePile()
+
+	win := protocol.StateSnapshot{
+		Phase:   protocol.Finished,
+		Rev:     2,
+		YouSeat: 0,
+		Players: []protocol.PlayerView{
+			{Seat: 0, IsYou: true, CardCount: 0, Connected: true},
+			{Seat: 1, CardCount: 5, Connected: true, Score: 7},
+		},
+		Table:   parseHand(t, "2S"),
+		TableBy: 0,
+		Turn:    0,
+		Winner:  0,
+	}
+	m.Update(protocol.StateSnapshotMsg{Snap: win})
+
+	// While the winning card slides in, the board is shown (footer legend present),
+	// not the scoreboard.
+	if !m.winSlideActive() {
+		t.Fatal("winning play should start a slide, not settle instantly")
+	}
+	during := m.View()
+	if strings.Contains(during, "wins") {
+		t.Fatal("scoreboard shown before the winning card finished sliding in")
+	}
+	if !strings.Contains(during, "esc quit") {
+		t.Fatal("board (footer) should be shown while the winning play slides in")
+	}
+
+	// Drive the slide to completion; the scoreboard then takes over.
+	for i := 0; i < pileSteps+2 && m.pileStep < pileSteps; i++ {
+		m.Update(pileAnimMsg{gen: m.pileGen})
+	}
+	if m.winSlideActive() {
+		t.Fatal("win slide should be finished after enough ticks")
+	}
+	after := m.View()
+	if !strings.Contains(after, "wins") {
+		t.Fatal("scoreboard should show once the winning card has slid in")
+	}
 }
 
 // TestOffTurnScrollClamps: off turn, scrolling a hand wider than the screen keeps
