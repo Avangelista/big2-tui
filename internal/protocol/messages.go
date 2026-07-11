@@ -47,11 +47,14 @@ type StateSnapshot struct {
 // PlayerView is the redacted, public view of one seat.
 type PlayerView struct {
 	Seat      int
-	CardCount int // count only - never the cards
+	Letter    byte // chosen display letter, unique per room
+	CardCount int  // count only - never the cards
 	Connected bool
 	IsYou     bool
 	IsTurn    bool
 	IsHost    bool
+	IsBot     bool
+	BotLevel  int  // 1-9 difficulty when IsBot; 0 otherwise
 	Passed    bool // passed (locked out) in the current trick
 	Score     int
 }

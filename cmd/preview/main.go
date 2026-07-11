@@ -73,12 +73,31 @@ func renderPlay(title string, w, h int, snap protocol.StateSnapshot, selected []
 	fmt.Println(strings.Repeat("-", w))
 }
 
-// renderBoss renders a snapshot with the boss key toggled on (borders blanked).
+// renderPile feeds a sequence of plays (each a new table combo) and renders the
+// board with the play-in slide settled, so the pile shows its resting centred card.
+func renderPile(title string, w, h int, base protocol.StateSnapshot, plays []string, by []int) {
+	m := tui.New(noopCommander{}, "rory", "ssh -p 2222 192.168.1.20", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	for i, p := range plays {
+		s := base
+		s.Table = hand(p)
+		s.TableBy = by[i]
+		s.Rev = i + 1
+		m.Update(protocol.StateSnapshotMsg{Snap: s})
+	}
+	m.SettlePile() // headless: no tick loop, so land the slide at rest
+	fmt.Printf("\n===== %s (%dx%d) =====\n", title, w, h)
+	fmt.Println(strings.Repeat("-", w))
+	fmt.Println(m.View())
+	fmt.Println(strings.Repeat("-", w))
+}
+
+// renderBoss renders a snapshot with the hide-card-UI toggle on (borders blanked).
 func renderBoss(title string, w, h int, snap protocol.StateSnapshot) {
 	m := tui.New(noopCommander{}, "rory", "ssh -p 2222 192.168.1.20", lipgloss.DefaultRenderer())
 	m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	m.Update(protocol.StateSnapshotMsg{Snap: snap})
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}) // toggle boss on
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}}) // toggle "hide card UI" on
 	fmt.Printf("\n===== %s (%dx%d) =====\n", title, w, h)
 	fmt.Println(strings.Repeat("-", w))
 	fmt.Println(m.View())
@@ -144,13 +163,32 @@ func main() {
 	render("waiting room (host, 3 joined)", 80, 24, waiting, 0, "")
 	render("waiting room (34 wide)", 34, 18, waiting, 0, "")
 
+	// Waiting room with chosen letters and a bot seated.
+	withBots := protocol.StateSnapshot{
+		Phase: protocol.Waiting, YouSeat: 0, IsHost: true, MaxSeats: 4, MinStart: 2,
+		Players: []protocol.PlayerView{
+			{Seat: 0, Letter: 'R', IsYou: true, IsHost: true, Connected: true},
+			{Seat: 1, Letter: 'K', Connected: true},
+			{Seat: 2, Letter: 'Q', IsBot: true, BotLevel: 7, Connected: true},
+		},
+		Turn: -1, Winner: -1,
+	}
+	render("waiting room (chosen letters + a bot)", 80, 24, withBots, 0, "")
+	render("waiting room (non-host view)", 80, 24, func() protocol.StateSnapshot {
+		s := withBots
+		s.YouSeat, s.IsHost = 1, false
+		s.Players = append([]protocol.PlayerView(nil), withBots.Players...)
+		s.Players[0].IsYou, s.Players[1].IsYou = false, true
+		return s
+	}(), 0, "")
+
 	over := protocol.StateSnapshot{
 		Phase: protocol.Finished, YouSeat: 0, IsHost: true, MaxSeats: 4, MinStart: 3,
 		Players: []protocol.PlayerView{
 			{Seat: 0, CardCount: 0, IsYou: true, IsHost: true, Connected: true, Score: 0},
 			{Seat: 1, CardCount: 7, Connected: true, Score: 14},
 			{Seat: 2, CardCount: 3, Connected: true, Score: 3},
-			{Seat: 3, CardCount: 13, Connected: true, Score: 52},
+			{Seat: 3, CardCount: 13, Connected: true, Score: 52, IsBot: true, BotLevel: 4},
 		},
 		Turn: -1, Winner: 0,
 	}
@@ -268,8 +306,22 @@ func main() {
 	}
 	render("dead player: D left (d marker), A on turn", 80, 24, dead, 0, "")
 
+	// Pile at rest: the newest play sits centred, covering the ones it beat. The
+	// slide-in (from the player's side) is a runtime animation, not shown here.
+	pileBase := fourP
+	pileBase.Table = nil
+	pileBase.TableBy = -1
+	pairs := []string{"3D 3C", "6H 6S", "TD TH", "KD KH"}
+	pairBy := []int{2, 3, 1, 0} // top, right, left, self
+	renderPile("pile at rest: newest pair, centred (4 plays)", 80, 24, pileBase, pairs, pairBy)
+	renderPile("pile at rest, min size (34x14)", 34, 14, pileBase, pairs, pairBy)
+	fives := []string{"3D 4D 5D 6D 7D", "9D TD JD QD KD"}
+	fiveBy := []int{2, 3} // top, right
+	renderPile("pile at rest: wide 5-card play, centred", 80, 24, pileBase, fives, fiveBy)
+	renderPile("pile at rest: 5-card play, min size (34x14)", 34, 14, pileBase, fives, fiveBy)
+
 	// Boss key: same board with all | and _ blanked out.
-	renderBoss("boss key ON: borders blanked (looks like plain text)", 80, 24, fourP)
+	renderBoss("hide card UI ON: borders blanked (looks like plain text)", 80, 24, fourP)
 
 	render("too small", 30, 10, fourP, 0, "")
 }

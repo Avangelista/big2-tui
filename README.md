@@ -4,7 +4,7 @@ A networked, terminal Big 2 (Deuces / 鋤大弟). One binary is both the game an
 server: you run it, land in a waiting room, and friends join over SSH - nothing to
 install. You only ever see your own hand; everyone else is a face-down count. The
 board is deliberately plain so it doesn't obviously read as a game - there's even a
-boss key.
+key to hide the card UI. Short-handed? The host can fill seats with bots.
 
 ## Requirements
 
@@ -25,9 +25,9 @@ You land on a waiting page; others join from their own terminals:
 ssh -p 2222 <your-host>
 ```
 
-The host presses **s** to start once 2+ players are in. After that, new connections
-are turned away, and everything lives in memory - stop the binary and the room is
-gone.
+The host presses **enter** to start once 2+ players are in, and can fill empty
+seats with bots first (`+`). After that, new connections are turned away, and
+everything lives in memory - stop the binary and the room is gone.
 
 Headless (no local host - the first person to connect becomes host):
 
@@ -37,9 +37,14 @@ Headless (no local host - the first person to connect becomes host):
 
 ## Controls
 
-`←/→` move the cursor (or scroll your hand when it isn't your turn) · `space`
-select/deselect · `enter` play · `x` pass · `c` clear selection · `b` hide the
-board (boss key) · `q` quit.
+**Waiting room** — `a`-`z` pick your letter · `enter` start (host) · host also
+`1`-`9` set bot difficulty and `+`/`-` add/remove a bot · `esc` quit.
+
+**In-game** — `←`/`→` move the cursor (or scroll your hand when it isn't your turn)
+· `space` select/deselect · `enter` play · `x` pass · `c` clear selection · `h`
+hide the card UI · `esc` quit.
+
+**Between hands** — `enter` deals the next hand (host) · `esc` quit.
 
 ## Rules (this build)
 
@@ -53,7 +58,7 @@ board (boss key) · `q` quit.
 - Passing is locked out: once you pass you're done until the trick resolves.
 - Scored match: each hand, you take penalty points for the cards left in your hand
   (×2 at 8-9, ×3 at 10-12, ×4 at 13+). Totals carry over and the host deals again
-  with **n**; lowest total wins.
+  with **enter**; lowest total wins.
 - Drop out and your seat stays in as a dead player (`D`) that auto-passes - no
   rejoining.
 
@@ -64,6 +69,7 @@ cmd/server         the binary: SSH server + local host TUI
 cmd/preview        dev aid - render every screen headlessly at fixed sizes
 cmd/sshprobe       dev aid - connect N SSH clients and smoke-test the transport
 internal/game      rules engine: no I/O, unit-tested
+internal/bot       heuristic Big 2 player (public info only)
 internal/room      one in-memory room actor + redacted per-viewer fan-out
 internal/protocol  the snapshot messages between room and client
 internal/tui       Bubble Tea models + responsive rendering

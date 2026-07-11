@@ -28,4 +28,4 @@ clean:
 smoke: build
 	@echo "1) In this terminal:   ./$(BIN) -port $(PORT)"
 	@echo "2) In 2-3 others:      ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $(PORT) localhost"
-	@echo "3) Host presses 's' to start (2+ players)."
+	@echo "3) Host presses enter to start (2+ players); + adds a bot."

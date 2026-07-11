@@ -12,14 +12,20 @@ import (
 
 const (
 	minW = 34
-	minH = 13 // 4-player board: top band 2 + side fans >=5 + bottom (error + hand) 5
+	minH = 14 // top band 2 + side fans >=5 + bottom (error 1 + hand 4 + footer 1)
 )
 
 // ---- player letters & labels ----
 
-// letterFor maps a seat to its fixed letter, the same for every viewer: A is the
-// host (seat 0), then B, C, D.
+// letterFor returns a seat's chosen display letter. The A/B/C/D fallback only
+// applies before the first snapshot; the letter is cosmetic, positions stay
+// seat-based.
 func (m *Model) letterFor(seat int) byte {
+	if m.snap != nil && seat >= 0 && seat < len(m.snap.Players) {
+		if l := m.snap.Players[seat].Letter; l != 0 {
+			return l
+		}
+	}
 	return byte('A' + seat)
 }
 
@@ -78,6 +84,14 @@ func youHostTag(p protocol.PlayerView) string {
 	return ""
 }
 
+// botTag labels a bot seat as "(lvl N bot)", or "" for a human.
+func botTag(p protocol.PlayerView) string {
+	if p.IsBot {
+		return fmt.Sprintf("(lvl %d bot)", p.BotLevel)
+	}
+	return ""
+}
+
 // ---- game table (anchored to the screen edges: C top, B left, D right, A
 // bottom, pile centre) ----
 
@@ -94,9 +108,11 @@ func (m *Model) renderGame() string {
 	// Bottom edge: an always-visible error line above the hand, centred over the
 	// table.
 	self := lipgloss.PlaceHorizontal(w, lipgloss.Center, m.selfBand())
+	footer := lipgloss.PlaceHorizontal(w, lipgloss.Center, m.st.faint.Render(gameFooter(w)))
 	bottom := lipgloss.JoinVertical(lipgloss.Left,
 		m.errorLine(w),
 		self,
+		footer,
 	)
 	bottomH := lipgloss.Height(bottom)
 
@@ -150,9 +166,8 @@ func (m *Model) topBand(n, w int) string {
 // midRow: left opponent flush-left, right opponent flush-right, pile centred,
 // filling exactly midH rows.
 func (m *Model) midRow(n, w, midH int) string {
-	pile := m.pileBox()
 	if n < 3 {
-		return lipgloss.Place(w, midH, lipgloss.Center, lipgloss.Center, pile)
+		return m.pileFloat(w, midH)
 	}
 	left := m.playerAtRel(1)      // B
 	right := m.playerAtRel(n - 1) // D in 4p, C in 3p
@@ -168,9 +183,37 @@ func (m *Model) midRow(n, w, midH int) string {
 	}
 
 	leftCol := lipgloss.Place(sideW, midH, lipgloss.Left, lipgloss.Center, m.sideBlock(left, midH-1, true))
-	centerCol := lipgloss.Place(centerW, midH, lipgloss.Center, lipgloss.Center, pile)
+	centerCol := m.pileFloat(centerW, midH)
 	rightCol := lipgloss.Place(sideW, midH, lipgloss.Right, lipgloss.Center, m.sideBlock(right, midH-1, false))
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftCol, centerCol, rightCol)
+}
+
+// pileNudge maps a relative seat to the on-screen direction of that player: self
+// is bottom, and the rest are placed by seat count (see topBand/midRow). It is the
+// per-play step the pile drifts toward whoever played, building a virtual stack.
+func pileNudge(rel, n int) (dx, dy int) {
+	if rel == 0 {
+		return 0, 1 // self: bottom
+	}
+	switch n {
+	case 2:
+		return 0, -1 // the only opponent sits at the top
+	case 3:
+		if rel == 1 {
+			return -1, 0 // left
+		}
+		return 1, 0 // right
+	case 4:
+		switch rel {
+		case 1:
+			return -1, 0 // left
+		case 2:
+			return 0, -1 // top
+		default:
+			return 1, 0 // right
+		}
+	}
+	return 0, 0
 }
 
 // sideBlock: a side opponent's sideways fan, label pinned at the anchored outer
@@ -198,17 +241,15 @@ func (m *Model) sideBlock(p protocol.PlayerView, budget int, leftSide bool) stri
 	return lipgloss.JoinVertical(align, append(fan, m.label(p))...)
 }
 
-// pileBox renders the current winning play as a horizontal face-up card box,
-// empty on a new trick:
+// pileBoxLines renders one played combo as the 4 rows of a horizontal face-up box:
 //
 //	 __________
 //	|4D|4H|2S  |
 //	|  |  |    |
 //	|__|__|____|
-func (m *Model) pileBox() string {
-	cs := m.snap.Table
+func pileBoxLines(cs []game.Card) []string {
 	if len(cs) == 0 {
-		return ""
+		return nil
 	}
 	var faces, blanks, bottom strings.Builder
 	faces.WriteByte('|')
@@ -226,12 +267,89 @@ func (m *Model) pileBox() string {
 		bottom.WriteString(under + "|")
 	}
 	w := lipgloss.Width(faces.String())
-	return lipgloss.JoinVertical(lipgloss.Left,
-		" "+strings.Repeat("_", w-2),
+	return []string{
+		" " + strings.Repeat("_", w-2),
 		faces.String(),
 		blanks.String(),
 		bottom.String(),
-	)
+	}
+}
+
+// pileFloat draws the pile in a w x h block. The current play rests centred; when a
+// new play arrives it slides in from the side of the player who made it, starting
+// fully off the block edge so it enters clipped (top/bottom or side cut off) and
+// glides fully into view - a real entrance even when there is little room to travel.
+// It opaquely covers the play it beat; within a trick every play is the same size,
+// so at rest the incoming card covers the previous one exactly - no visible stack.
+func (m *Model) pileFloat(w, h int) string {
+	grid := make([][]byte, h)
+	for r := range grid {
+		grid[r] = []byte(strings.Repeat(" ", w))
+	}
+	// The play being covered sits centred underneath the incoming card.
+	if prev := pileBoxLines(m.pilePrev); len(prev) > 0 {
+		pasteBox(grid, prev, (w-boxWidth(prev))/2, (h-len(prev))/2)
+	}
+	// The current play glides from its side (step 0) to centre (step pileSteps).
+	if box := pileBoxLines(m.pileCur); len(box) > 0 {
+		bw, bh := boxWidth(box), len(box)
+		endX, endY := (w-bw)/2, (h-bh)/2
+		startX, startY := endX, endY
+		switch {
+		case m.pileDir[0] > 0:
+			startX = w // fully off the right edge: enters clipped, slides left
+		case m.pileDir[0] < 0:
+			startX = -bw // fully off the left edge
+		}
+		switch {
+		case m.pileDir[1] > 0:
+			startY = h // fully below: enters clipped, slides up
+		case m.pileDir[1] < 0:
+			startY = -bh // fully above
+		}
+		step := clampi(m.pileStep, 0, pileSteps)
+		x := startX + (endX-startX)*step/pileSteps
+		y := startY + (endY-startY)*step/pileSteps
+		pasteBox(grid, box, x, y)
+	}
+	out := make([]string, h)
+	for r := range grid {
+		out[r] = string(grid[r])
+	}
+	return strings.Join(out, "\n")
+}
+
+// boxWidth is the widest line in a rendered card box.
+func boxWidth(box []string) int {
+	w := 0
+	for _, l := range box {
+		if len(l) > w {
+			w = len(l)
+		}
+	}
+	return w
+}
+
+// pasteBox draws box opaquely at (x0,y0) onto grid, clipped to the grid. Every cell
+// is written, including the card's blank body, so it hides whatever is behind it - a
+// card in front, not a stack.
+func pasteBox(grid [][]byte, box []string, x0, y0 int) {
+	h := len(grid)
+	w := 0
+	if h > 0 {
+		w = len(grid[0])
+	}
+	for r, line := range box {
+		gy := y0 + r
+		if gy < 0 || gy >= h {
+			continue
+		}
+		for c := 0; c < len(line); c++ {
+			if gx := x0 + c; gx >= 0 && gx < w {
+				grid[gy][gx] = line[c]
+			}
+		}
+	}
 }
 
 // selfBand: the viewer's hand as a fanned row. A selected card lifts one row so
@@ -454,45 +572,41 @@ func (m *Model) renderWaiting() string {
 	s := m.snap
 	var b strings.Builder
 	for i := 0; i < s.MaxSeats; i++ {
-		if i < len(s.Players) {
-			p := s.Players[i]
-			line := string(m.letterFor(p.Seat))
-			if t := youHostTag(p); t != "" {
-				line += " " + t
-			}
-			if !p.Connected {
-				line += " (gone)"
-			}
-			b.WriteString(line + "\n")
-		} else {
+		if i >= len(s.Players) {
 			b.WriteString("-\n")
+			continue
 		}
+		p := s.Players[i]
+		line := string(m.letterFor(p.Seat))
+		switch {
+		case botTag(p) != "":
+			line += " " + botTag(p)
+		case youHostTag(p) != "":
+			line += " " + youHostTag(p)
+		}
+		if !p.Connected {
+			line += " (gone)"
+		}
+		b.WriteString(line + "\n")
 	}
 	b.WriteString("\n")
-	ready := len(s.Players) >= s.MinStart
+	// Status first, so the host always sees how to start (or why they can't yet).
 	switch {
-	case s.IsHost && ready:
-		b.WriteString("s: start\n")
+	case s.IsHost && len(s.Players) >= s.MinStart:
+		b.WriteString("enter    start\n")
 	case s.IsHost:
 		b.WriteString(fmt.Sprintf("need %d+ to start\n", s.MinStart))
 	default:
 		b.WriteString("waiting for host...\n")
 	}
-	if m.joinHint != "" {
-		b.WriteString("\nothers join with:\n" + m.joinHint + "\n")
+	b.WriteString("\na-z      pick letter")
+	if s.IsHost {
+		b.WriteString(fmt.Sprintf("\n1-9      bot level (%d)", m.pendingBotLevel))
+		b.WriteString("\n+ / -    add / remove bot")
 	}
-	// compact two-column key legend to fit the minimum width
-	for _, r := range [][4]string{
-		{"arrows", "move", "x", "pass"},
-		{"space", "select", "c", "clear"},
-		{"enter", "play", "q", "quit"},
-		{"b", "hide", "", ""},
-	} {
-		if r[2] == "" {
-			b.WriteString(fmt.Sprintf("\n%-7s %s", r[0]+":", r[1]))
-			continue
-		}
-		b.WriteString(fmt.Sprintf("\n%-7s %-6s  %-2s %s", r[0]+":", r[1], r[2]+":", r[3]))
+	b.WriteString("\nesc      quit")
+	if m.joinHint != "" {
+		b.WriteString("\n\n" + m.joinHint)
 	}
 	return m.centerBlock(b.String())
 }
@@ -507,18 +621,21 @@ func (m *Model) renderOver() string {
 	}
 	for _, p := range rankByScore(s.Players) {
 		mark := ""
-		if t := youHostTag(p); t != "" {
-			mark = "  " + t
+		switch {
+		case botTag(p) != "":
+			mark = "  " + botTag(p)
+		case youHostTag(p) != "":
+			mark = "  " + youHostTag(p)
 		}
 		b.WriteString(fmt.Sprintf("%c %4d%s\n", m.letterFor(p.Seat), p.Score, mark))
 	}
 	b.WriteString("\n")
 	if s.IsHost {
-		b.WriteString("n: next hand")
+		b.WriteString("enter    next hand")
 	} else {
 		b.WriteString("waiting for host...")
 	}
-	b.WriteString("\nq: quit")
+	b.WriteString("\nesc      quit")
 	return m.centerBlock(b.String())
 }
 
@@ -544,6 +661,16 @@ func rankByScore(players []protocol.PlayerView) []protocol.PlayerView {
 
 func (m *Model) renderKicked() string {
 	return m.centerBlock(m.kicked + "\n\n" + m.st.faint.Render("press any key to disconnect"))
+}
+
+// gameFooter is the always-present in-game key legend, shortened on narrow
+// terminals so it never wraps past the board.
+func gameFooter(w int) string {
+	full := "arrows move  space pick  enter play  x pass  c clear  h hide  esc quit"
+	if lipgloss.Width(full) <= w {
+		return full
+	}
+	return "arrows  space  enter  x  c  h  esc"
 }
 
 // ---- helpers ----

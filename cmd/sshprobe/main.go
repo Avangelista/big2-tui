@@ -21,8 +21,8 @@ import (
 var ansi = regexp.MustCompile(`\x1b\][^\x07]*\x07|\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[=>]|\x1b\][0-9);]*`)
 
 var (
-	reLabel    = regexp.MustCompile(`([A-D]) \d+`)   // a player's "L n" label
-	reTurn     = regexp.MustCompile(`\[[A-D] \d+\]`) // the bracketed label = whose turn it is
+	reLabel    = regexp.MustCompile(`([A-Z]) \d+`)   // a player's "L n" label
+	reTurn     = regexp.MustCompile(`\[[A-Z] \d+\]`) // the bracketed label = whose turn it is
 	rePlayed3D = regexp.MustCompile(`\|3D`)          // the 3D opener sitting in the centre pile
 )
 
@@ -129,9 +129,9 @@ func main() {
 		time.Sleep(200 * time.Millisecond) // stagger joins
 	}
 
-	time.Sleep(800 * time.Millisecond)         // waiting room settles
-	_, _ = clients[0].stdin.Write([]byte("s")) // host starts the game (no auto-start)
-	time.Sleep(1500 * time.Millisecond)        // game renders
+	time.Sleep(800 * time.Millisecond)          // waiting room settles
+	_, _ = clients[0].stdin.Write([]byte("\r")) // host presses enter to start (no auto-start)
+	time.Sleep(1500 * time.Millisecond)         // game renders
 
 	pass, fail := 0, 0
 	check := func(cond bool, msg string) {
@@ -149,15 +149,15 @@ func main() {
 		frame := clean(raw)
 		fmt.Printf("\n===== %s frame [raw %d bytes] =====\n%s\n", c.name, len(raw), frame)
 		check(len(strings.TrimSpace(frame)) > 0, c.name+" rendered a non-empty frame")
-		// Every viewer sees the same four players A-D (consistent, absolute letters).
+		// Every viewer sees the same four distinct player letters.
 		seen := map[string]bool{}
 		for _, mm := range reLabel.FindAllStringSubmatch(frame, -1) {
 			seen[mm[1]] = true
 		}
-		check(len(seen) == 4, fmt.Sprintf("%s sees all four players A-D (got %d)", c.name, len(seen)))
+		check(len(seen) == 4, fmt.Sprintf("%s sees all four players (got %d)", c.name, len(seen)))
 	}
 
-	// After the host presses 's' the game starts; exactly one label (in any one
+	// After the host presses enter the game starts; exactly one label (in any one
 	// frame) should be on turn.
 	turns := len(reTurn.FindAllString(clean(clients[0].buf.String()), -1))
 	check(turns == 1, fmt.Sprintf("exactly one player is on turn (got %d)", turns))

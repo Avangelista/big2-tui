@@ -33,6 +33,28 @@ type PassCmd struct{ ID string }
 // NextHandCmd (host only) deals a fresh hand after one finishes, keeping scores.
 type NextHandCmd struct{ ID string }
 
+// SetLetterCmd (waiting room) requests the sender's seat display letter.
+type SetLetterCmd struct {
+	ID     string
+	Letter byte
+}
+
+// AddBotCmd (host only, waiting room) seats a bot at difficulty Level (1-9).
+type AddBotCmd struct {
+	ID    string
+	Level int
+}
+
+// RemoveBotCmd (host only, waiting room) removes the most-recently-added bot.
+type RemoveBotCmd struct{ ID string }
+
+// BotActCmd fires ~1s after a bot's turn begins; the actor re-checks it is still
+// that bot's turn (Seat + Token) before acting.
+type BotActCmd struct {
+	Seat  int
+	Token int
+}
+
 // DisconnectCmd marks a seat's connection gone (SSH context cancelled).
 type DisconnectCmd struct{ ID string }
 
@@ -46,3 +68,7 @@ func (PassCmd) isCmd()       {}
 func (NextHandCmd) isCmd()   {}
 func (DisconnectCmd) isCmd() {}
 func (QuitCmd) isCmd()       {}
+func (SetLetterCmd) isCmd()  {}
+func (AddBotCmd) isCmd()     {}
+func (RemoveBotCmd) isCmd()  {}
+func (BotActCmd) isCmd()     {}

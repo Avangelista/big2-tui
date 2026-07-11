@@ -8,20 +8,26 @@ import (
 	"encoding/hex"
 	"fmt"
 	mrand "math/rand"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Avangelista/deuception/internal/bot"
 	"github.com/Avangelista/deuception/internal/game"
 	"github.com/Avangelista/deuception/internal/protocol"
 )
 
-// Seat is one player position in the room.
+// Seat is one player position in the room. A bot seat is Connected with Bot set
+// and a nil Prog, so it is skipped by fanout and never swept as a dropout.
 type Seat struct {
 	ID        string
 	Prog      *tea.Program
 	Connected bool
 	Host      bool
-	Score     int // cumulative penalty across hands (lower is better)
+	Bot       bool
+	BotLevel  int  // 1-9 difficulty when Bot
+	Letter    byte // chosen display letter, unique per room
+	Score     int  // cumulative penalty across hands (lower is better)
 }
 
 // Room is a single game room served to many connections.
@@ -30,12 +36,14 @@ type Room struct {
 	maxSeats int
 	minStart int
 	rng      *mrand.Rand
+	botDelay time.Duration // how long a bot "thinks" before acting
 
 	// actor-owned state (only touched inside run):
-	seats []*Seat
-	game  *game.GameState
-	phase protocol.Phase
-	rev   int // monotonic snapshot revision; lets clients drop out-of-order sends
+	seats     []*Seat
+	game      *game.GameState
+	phase     protocol.Phase
+	rev       int // monotonic snapshot revision; lets clients drop out-of-order sends
+	turnToken int // bumped whenever a bot is scheduled; invalidates stale timers
 }
 
 // New starts a room actor. maxSeats caps the table, minStart is the fewest that can start.
@@ -46,6 +54,7 @@ func New(maxSeats, minStart int, rng *mrand.Rand) *Room {
 		minStart: minStart,
 		rng:      rng,
 		phase:    protocol.Waiting,
+		botDelay: time.Second,
 	}
 	go r.run()
 	return r
@@ -77,6 +86,14 @@ func (r *Room) run() {
 			r.handlePass(cmd)
 		case NextHandCmd:
 			r.handleNextHand(cmd)
+		case SetLetterCmd:
+			r.handleSetLetter(cmd)
+		case AddBotCmd:
+			r.handleAddBot(cmd)
+		case RemoveBotCmd:
+			r.handleRemoveBot(cmd)
+		case BotActCmd:
+			r.handleBotAct(cmd)
 		case DisconnectCmd:
 			r.handleLeave(cmd.ID)
 		case QuitCmd:
@@ -138,7 +155,7 @@ func (r *Room) handleJoin(c JoinCmd) {
 	}
 	// First to join is host (covers serve-only mode with no local host seat).
 	isHost := c.Host || len(r.seats) == 0
-	seat := &Seat{ID: c.ID, Prog: c.Prog, Connected: true, Host: isHost}
+	seat := &Seat{ID: c.ID, Prog: c.Prog, Connected: true, Host: isHost, Letter: r.freeLetter()}
 	r.seats = append(r.seats, seat)
 	r.fanout()
 }
@@ -153,7 +170,7 @@ func (r *Room) handleStart(c StartCmd) {
 		return
 	}
 	r.startGame()
-	r.fanout()
+	r.afterTransition()
 }
 
 func (r *Room) startGame() {
@@ -163,6 +180,7 @@ func (r *Room) startGame() {
 		return
 	}
 	r.phase = protocol.InGame
+	r.turnToken++ // fresh hand: any leftover bot timer can't match
 }
 
 func (r *Room) handlePlay(c PlayCmd) {
@@ -179,8 +197,7 @@ func (r *Room) handlePlay(c PlayCmd) {
 		return
 	}
 	r.applyEvents(evs)
-	r.autoAdvanceForDisconnected() // don't stall if the turn lands on a dropped player
-	r.fanout()
+	r.afterTransition()
 }
 
 func (r *Room) handlePass(c PassCmd) {
@@ -197,8 +214,7 @@ func (r *Room) handlePass(c PassCmd) {
 		return
 	}
 	r.applyEvents(evs)
-	r.autoAdvanceForDisconnected() // don't stall if the turn lands on a dropped player
-	r.fanout()
+	r.afterTransition()
 }
 
 func (r *Room) handleNextHand(c NextHandCmd) {
@@ -206,13 +222,8 @@ func (r *Room) handleNextHand(c NextHandCmd) {
 	if s == nil || !s.Host || r.phase != protocol.Finished {
 		return
 	}
-	r.game = game.NewGame(len(r.seats), game.SimpleStraight)
-	if err := r.game.Deal(r.rng); err != nil {
-		return
-	}
-	r.phase = protocol.InGame
-	r.autoAdvanceForDisconnected() // a carried-over dropped player may be the leader
-	r.fanout()
+	r.startGame()
+	r.afterTransition()
 }
 
 func (r *Room) handleLeave(id string) {
@@ -227,12 +238,20 @@ func (r *Room) handleLeave(id string) {
 		return
 	}
 	seat.Connected = false
+	r.afterTransition()
+}
+
+// afterTransition runs after any state change: fast-forward disconnected humans
+// synchronously, schedule the bot the turn now rests on (if any), then fan out.
+func (r *Room) afterTransition() {
 	r.autoAdvanceForDisconnected()
+	r.maybeScheduleBot()
 	r.fanout()
 }
 
-// autoAdvanceForDisconnected keeps play moving on a disconnected seat's turn:
-// pass if it can, else lead its lowest card.
+// autoAdvanceForDisconnected keeps play moving on a *disconnected* seat's turn
+// (bots are Connected, so they are never swept here — they use the delayed
+// scheduler instead).
 func (r *Room) autoAdvanceForDisconnected() {
 	guard := 0
 	for r.phase == protocol.InGame && !r.seats[r.game.Turn].Connected {
@@ -240,23 +259,185 @@ func (r *Room) autoAdvanceForDisconnected() {
 		if guard > 500 {
 			return
 		}
-		turn := r.game.Turn
-		var evs []game.Event
-		var err error
-		if r.game.Table == nil {
-			hand := r.game.Hands[turn]
-			if len(hand) == 0 {
-				return
-			}
-			evs, err = r.game.Play(turn, []game.Card{hand[0]}) // hand is sorted ascending
-		} else {
-			evs, err = r.game.Pass(turn)
-		}
-		if err != nil {
+		evs := r.forcedMove(r.game.Turn)
+		if evs == nil {
 			return
 		}
 		r.applyEvents(evs)
 	}
+}
+
+// forcedMove applies a guaranteed-legal fallback for seat: pass while following,
+// else lead its lowest card (the opener when it's the first play). nil on error.
+func (r *Room) forcedMove(seat game.Seat) []game.Event {
+	if r.game.Table == nil {
+		hand := r.game.Hands[seat]
+		if len(hand) == 0 {
+			return nil
+		}
+		evs, err := r.game.Play(seat, []game.Card{hand[0]}) // hand is sorted ascending
+		if err != nil {
+			return nil
+		}
+		return evs
+	}
+	evs, err := r.game.Pass(seat)
+	if err != nil {
+		return nil
+	}
+	return evs
+}
+
+// maybeScheduleBot schedules a delayed move if the turn rests on a bot. The 1s
+// wait happens in a spawned goroutine (never the actor); it Submits a BotActCmd
+// back, tagged with turnToken so a stale timer is ignored.
+func (r *Room) maybeScheduleBot() {
+	if r.phase != protocol.InGame {
+		return
+	}
+	seat := int(r.game.Turn)
+	if !r.seats[seat].Bot {
+		return
+	}
+	r.turnToken++
+	tok := r.turnToken
+	delay := r.botDelay
+	go func() {
+		time.Sleep(delay)
+		r.Submit(BotActCmd{Seat: seat, Token: tok})
+	}()
+}
+
+func (r *Room) handleBotAct(c BotActCmd) {
+	if r.phase != protocol.InGame || c.Token != r.turnToken {
+		return // stale timer or hand ended
+	}
+	if c.Seat < 0 || c.Seat >= len(r.seats) || !r.seats[c.Seat].Bot || int(r.game.Turn) != c.Seat {
+		return
+	}
+	mv := bot.ChooseMove(r.game, game.Seat(c.Seat), r.seats[c.Seat].BotLevel, r.rng)
+	var evs []game.Event
+	var err error
+	if mv.Pass {
+		evs, err = r.game.Pass(game.Seat(c.Seat))
+	} else {
+		evs, err = r.game.Play(game.Seat(c.Seat), mv.Cards)
+	}
+	if err != nil {
+		evs = r.forcedMove(game.Seat(c.Seat)) // never stall on a policy bug
+		if evs == nil {
+			return
+		}
+	}
+	r.applyEvents(evs)
+	r.afterTransition()
+}
+
+func (r *Room) handleSetLetter(c SetLetterCmd) {
+	if r.phase != protocol.Waiting {
+		return
+	}
+	s := r.seatByID(c.ID)
+	if s == nil {
+		return
+	}
+	L := upperByte(c.Letter)
+	if L < 'A' || L > 'Z' || L == s.Letter {
+		r.fanout() // invalid or unchanged: let the client snap back to the truth
+		return
+	}
+	var holder *Seat
+	for _, o := range r.seats {
+		if o != s && o.Letter == L {
+			holder = o
+			break
+		}
+	}
+	if holder != nil && !holder.Bot {
+		r.fanout() // a human holds it: reject
+		return
+	}
+	s.Letter = L
+	if holder != nil { // a bot held it: humans win, bump the bot elsewhere
+		holder.Letter = r.randomFreeLetter()
+	}
+	r.fanout()
+}
+
+func (r *Room) handleAddBot(c AddBotCmd) {
+	s := r.seatByID(c.ID)
+	if s == nil || !s.Host || r.phase != protocol.Waiting {
+		return
+	}
+	if len(r.seats) >= r.maxSeats {
+		safeSend(s.Prog, protocol.ErrorMsg{Text: "room is full"})
+		return
+	}
+	level := c.Level
+	if level < 1 {
+		level = 5
+	}
+	if level > 9 {
+		level = 9
+	}
+	r.seats = append(r.seats, &Seat{
+		ID: NewID(), Connected: true, Bot: true, BotLevel: level, Letter: r.randomFreeLetter(),
+	})
+	r.fanout()
+}
+
+func (r *Room) handleRemoveBot(c RemoveBotCmd) {
+	s := r.seatByID(c.ID)
+	if s == nil || !s.Host || r.phase != protocol.Waiting {
+		return
+	}
+	for i := len(r.seats) - 1; i >= 0; i-- {
+		if r.seats[i].Bot {
+			r.seats = append(r.seats[:i], r.seats[i+1:]...)
+			r.fanout()
+			return
+		}
+	}
+}
+
+// freeLetter is the lowest A-Z letter no seat holds (human default).
+func (r *Room) freeLetter() byte {
+	for L := byte('A'); L <= 'Z'; L++ {
+		if !r.letterTaken(L) {
+			return L
+		}
+	}
+	return 'A' // unreachable: at most maxSeats <= 26 seats
+}
+
+// randomFreeLetter is a random A-Z letter no seat holds (bots get these).
+func (r *Room) randomFreeLetter() byte {
+	var free []byte
+	for L := byte('A'); L <= 'Z'; L++ {
+		if !r.letterTaken(L) {
+			free = append(free, L)
+		}
+	}
+	if len(free) == 0 {
+		return 'A'
+	}
+	return free[r.rng.Intn(len(free))]
+}
+
+func (r *Room) letterTaken(L byte) bool {
+	for _, s := range r.seats {
+		if s.Letter == L {
+			return true
+		}
+	}
+	return false
+}
+
+func upperByte(b byte) byte {
+	if b >= 'a' && b <= 'z' {
+		return b - 'a' + 'A'
+	}
+	return b
 }
 
 func (r *Room) applyEvents(evs []game.Event) {
@@ -297,9 +478,12 @@ func (r *Room) snapshotFor(viewer int) protocol.StateSnapshot {
 	for i, s := range r.seats {
 		pv := protocol.PlayerView{
 			Seat:      i,
+			Letter:    s.Letter,
 			Connected: s.Connected,
 			IsYou:     i == viewer,
 			IsHost:    s.Host,
+			IsBot:     s.Bot,
+			BotLevel:  s.BotLevel,
 			Score:     s.Score,
 		}
 		if r.game != nil {

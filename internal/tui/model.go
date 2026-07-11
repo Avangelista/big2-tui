@@ -39,8 +39,16 @@ type Model struct {
 	hint     string
 	hintGen  int  // bumped on each hint so a stale timer can't clear a newer hint
 	lastRev  int  // highest snapshot revision applied; drops out-of-order deliveries
-	boss     bool // "boss key": blank the card borders so the board looks like plain text
+	boss     bool // hide the card UI (blank the borders so the board reads as plain text)
 	kicked   string
+
+	pendingBotLevel int // difficulty applied to the next added bot (1-9)
+
+	pileCur  []game.Card // the play currently shown in the pile
+	pilePrev []game.Card // the play it beat, drawn under the slide (same size within a trick)
+	pileDir  [2]int      // unit direction the current play slides in from
+	pileStep int         // slide frame, 0 (at the side) .. pileSteps (centred/at rest)
+	pileGen  int         // invalidates stale slide ticks
 }
 
 type hintExpireMsg struct{ gen int }
@@ -48,12 +56,13 @@ type hintExpireMsg struct{ gen int }
 // New builds a Model; renderer must be session-scoped (MakeRenderer for SSH).
 func New(r commander, id, joinHint string, renderer *lipgloss.Renderer) *Model {
 	return &Model{
-		room:     r,
-		id:       id,
-		joinHint: joinHint,
-		r:        renderer,
-		st:       newStyles(renderer),
-		selected: map[int]bool{},
+		room:            r,
+		id:              id,
+		joinHint:        joinHint,
+		r:               renderer,
+		st:              newStyles(renderer),
+		selected:        map[int]bool{},
+		pendingBotLevel: 5,
 	}
 }
 
@@ -69,7 +78,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.w, m.h = msg.Width, msg.Height
 		m.clampScroll() // resize changed how many cards fit; keep scroll in range
 	case protocol.StateSnapshotMsg:
-		m.applySnapshot(msg.Snap)
+		return m, m.applySnapshot(msg.Snap)
+	case pileAnimMsg:
+		return m, m.advancePile(msg)
 	case protocol.ErrorMsg:
 		return m, m.setHint(msg.Text)
 	case hintExpireMsg:
@@ -90,11 +101,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) applySnapshot(s protocol.StateSnapshot) {
+func (m *Model) applySnapshot(s protocol.StateSnapshot) tea.Cmd {
 	// Snapshots arrive on their own goroutines, so a later fanout can land first;
 	// ignore anything older than the newest applied.
 	if s.Rev != 0 && s.Rev < m.lastRev {
-		return
+		return nil
 	}
 	m.lastRev = s.Rev
 	var prevHand []game.Card
@@ -113,10 +124,12 @@ func (m *Model) applySnapshot(s protocol.StateSnapshot) {
 	if s.Phase == protocol.InGame && s.Turn == s.YouSeat {
 		m.hint = ""
 	}
+	cmd := m.updatePile(s)
 	if m.cursor >= len(s.YourHand) {
 		m.cursor = max(0, len(s.YourHand)-1)
 	}
 	m.clampScroll()
+	return cmd
 }
 
 // sameHand reports whether two hands hold the same cards in the same order.
@@ -130,6 +143,70 @@ func sameHand(a, b []game.Card) bool {
 		}
 	}
 	return true
+}
+
+// pileAnimMsg advances the play-in slide one frame; gen drops ticks from a slide
+// that has already been superseded by a newer play.
+type pileAnimMsg struct{ gen int }
+
+// pileSteps and pileTickEvery time the play-in slide: a short glide from the
+// player's side to the centre (pileSteps frames, ~pileSteps*pileTickEvery total).
+const (
+	pileSteps     = 8
+	pileTickEvery = 22 * time.Millisecond
+)
+
+// updatePile reacts to a snapshot: a new table combo starts a slide from the side
+// of the player who made it, opaquely covering the play it beat (both are the same
+// size within a trick). An empty table or a non-playing phase clears the pile.
+func (m *Model) updatePile(s protocol.StateSnapshot) tea.Cmd {
+	if s.Phase != protocol.InGame || len(s.Table) == 0 {
+		m.pileCur, m.pilePrev, m.pileDir, m.pileStep = nil, nil, [2]int{}, 0
+		return nil
+	}
+	if sameHand(m.pileCur, s.Table) {
+		return nil // same play still on the table
+	}
+	m.pilePrev = m.pileCur // the beaten play, covered as the new one slides over it
+	m.pileCur = append([]game.Card(nil), s.Table...)
+	dx, dy := 0, 0
+	if s.TableBy >= 0 {
+		n := len(s.Players)
+		dx, dy = pileNudge((s.TableBy-s.YouSeat+n)%n, n)
+	}
+	m.pileDir = [2]int{dx, dy}
+	m.pileGen++
+	if dx == 0 && dy == 0 { // no direction: just show it centred
+		m.pileStep, m.pilePrev = pileSteps, nil
+		return nil
+	}
+	m.pileStep = 0
+	return m.pileTick()
+}
+
+// pileTick schedules the next slide frame, tagged with the current generation.
+func (m *Model) pileTick() tea.Cmd {
+	gen := m.pileGen
+	return tea.Tick(pileTickEvery, func(time.Time) tea.Msg { return pileAnimMsg{gen: gen} })
+}
+
+// advancePile steps the slide, dropping the covered play once it settles centred.
+func (m *Model) advancePile(msg pileAnimMsg) tea.Cmd {
+	if msg.gen != m.pileGen || m.pileStep >= pileSteps {
+		return nil
+	}
+	m.pileStep++
+	if m.pileStep >= pileSteps {
+		m.pilePrev = nil // fully covered now: only the current play remains
+		return nil
+	}
+	return m.pileTick()
+}
+
+// SettlePile fast-forwards any in-flight slide to its resting centred frame. Used by
+// the headless preview and tests, which don't run the tick loop.
+func (m *Model) SettlePile() {
+	m.pileStep, m.pilePrev = pileSteps, nil
 }
 
 // clampScroll keeps the off-turn scroll within [0, len-maxHandCells] so a resize
@@ -152,16 +229,12 @@ func (m *Model) clampScroll() {
 
 func (m *Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c", "esc":
 		m.room.Submit(room.QuitCmd{ID: m.id})
 		return m, tea.Quit
 	}
 	if m.kicked != "" {
 		return m, tea.Quit
-	}
-	if k.String() == "b" {
-		m.boss = !m.boss // boss key: toggle the plain-text disguise
-		return m, nil
 	}
 	if m.snap == nil {
 		return m, nil
@@ -178,13 +251,32 @@ func (m *Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) keyWaiting(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch k.String() {
-	case "s":
+	key := k.String()
+	switch {
+	case key == "enter":
 		if m.snap.IsHost {
 			m.room.Submit(room.StartCmd{ID: m.id})
 		}
+	case key == "+" || key == "=": // '=' is the unshifted '+' key
+		if m.snap.IsHost {
+			m.room.Submit(room.AddBotCmd{ID: m.id, Level: m.pendingBotLevel})
+		}
+	case key == "-":
+		if m.snap.IsHost {
+			m.room.Submit(room.RemoveBotCmd{ID: m.id})
+		}
+	case len(key) == 1 && key[0] >= '1' && key[0] <= '9':
+		if m.snap.IsHost {
+			m.pendingBotLevel = int(key[0] - '0')
+		}
+	case len(key) == 1 && isLetter(key[0]):
+		m.room.Submit(room.SetLetterCmd{ID: m.id, Letter: key[0]}) // server enforces uniqueness
 	}
 	return m, nil
+}
+
+func isLetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
 func (m *Model) keyGame(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -240,6 +332,8 @@ func (m *Model) keyGame(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.selected = map[int]bool{} // passing discards any pending selection
 		m.room.Submit(room.PassCmd{ID: m.id})
+	case "h":
+		m.boss = !m.boss // hide the card UI (in-game only)
 	}
 	return m, nil
 }
@@ -260,7 +354,7 @@ func (m *Model) setHint(text string) tea.Cmd {
 
 func (m *Model) keyOver(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
-	case "n":
+	case "enter":
 		if m.snap.IsHost {
 			m.room.Submit(room.NextHandCmd{ID: m.id})
 		}
