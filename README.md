@@ -6,6 +6,8 @@ install. You only ever see your own hand; everyone else is a face-down count. Th
 board is deliberately plain so it doesn't obviously read as a game - there's even a
 key to hide the card UI. Short-handed? The host can fill seats with bots.
 
+![deuception: a four-player hand in progress in the terminal](preview.png)
+
 ## Requirements
 
 - Go 1.25+ to build (`brew install go`)
