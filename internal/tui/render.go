@@ -182,15 +182,15 @@ func (m *Model) topBand(n, w int) string {
 	// floor shows (receded to the top edge) and row 2 holds the last-play marker.
 	active := m.showTurn(p)
 	fill, floor := hFan(p.CardCount, w, active)
-	// The label stays pinned to the top row. Row 0 is the card back - the ░ body on
-	// turn (kept), the rounded floor off turn - and row 1 is the gap marker: ▴ points
-	// up at the hand on turn, ✗ passed, ⊘ gone, blank otherwise.
-	top := floor
+	// The label stays pinned to the top row. On turn the full card back shows (░ body
+	// over its floor) and the ▴ turn pointer sits in the pile gap just below (see
+	// pileFloat). Off turn the floor is on top and row 2 holds the status marker.
 	if active {
-		top = fill
+		return lipgloss.JoinVertical(lipgloss.Left,
+			m.paintBack(fill, true)+" "+m.label(p), m.paintBack(floor, true))
 	}
-	mark := lipgloss.PlaceHorizontal(lipgloss.Width(top), lipgloss.Center, m.styleMark(m.oppMark(p, "▴")))
-	return lipgloss.JoinVertical(lipgloss.Left, m.paintBack(top, active)+" "+m.label(p), mark)
+	mark := lipgloss.PlaceHorizontal(lipgloss.Width(floor), lipgloss.Center, m.styleMark(m.oppMark(p, "▴")))
+	return lipgloss.JoinVertical(lipgloss.Left, m.paintBack(floor, false)+" "+m.label(p), mark)
 }
 
 // midRow: left opponent flush-left, right opponent flush-right, pile centred,
@@ -370,6 +370,22 @@ func (m *Model) pileFloat(w, h int) string {
 		x := startX + (endX-startX)*step/pileSteps
 		y := startY + (endY-startY)*step/pileSteps
 		pasteBox(grid, box, x, y)
+	}
+	// Active top opponent: a ▴ pointer in the gap just above the pile, pointing up at
+	// their hand (the top band is full on turn, so its pointer lives here; the self ▾
+	// rides the error line and the sides use their fan). Boss-maps to ^.
+	if m.snap != nil && h > 0 && w > 0 {
+		var top protocol.PlayerView
+		ok := false
+		switch len(m.snap.Players) {
+		case 4:
+			top, ok = m.playerAtRel(2), true
+		case 2:
+			top, ok = m.playerAtRel(1), true
+		}
+		if ok && m.showTurn(top) {
+			grid[0][w/2] = '▴'
+		}
 	}
 	out := make([]string, h)
 	for r := range grid {
@@ -860,11 +876,11 @@ func (m *Model) renderOver() string {
 	}
 	b.WriteString("\n")
 	if s.IsHost {
-		b.WriteString(m.st.primary.Render("enter    next hand"))
+		b.WriteString(m.st.primary.Render("enter  next hand"))
 	} else {
 		b.WriteString(m.st.secondary.Render("waiting for host..."))
 	}
-	b.WriteString("\n" + m.st.secondary.Render("esc      quit"))
+	b.WriteString("\n" + m.st.secondary.Render("esc    quit"))
 	return m.centerBlock(b.String())
 }
 
