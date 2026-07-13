@@ -139,7 +139,7 @@ func TestSelfFanRoundedTiles(t *testing.T) {
 func TestMarkerGlyphsSafe(t *testing.T) {
 	for _, tc := range []struct{ glyph, ascii string }{
 		{"▴", "^"}, {"▾", "v"}, {"▸", ">"}, {"◂", "<"}, {"✗", "X"},
-		{"⊘", "D"}, {"‹", "<"}, {"›", ">"}, {"∙", "*"}, {"✓", "*"},
+		{"⊘", "D"}, {"‹", "<"}, {"›", ">"}, {"∙", "*"},
 	} {
 		if w := lipgloss.Width(tc.glyph); w != 1 {
 			t.Errorf("%q width = %d, want 1", tc.glyph, w)
