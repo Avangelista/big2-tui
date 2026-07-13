@@ -389,6 +389,9 @@ func (m *Model) keyGame(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		cards := m.selectedCards()
+		if len(cards) == 0 && m.cursor >= 0 && m.cursor < len(hand) {
+			cards = []game.Card{hand[m.cursor]} // quick-play the card under the cursor
+		}
 		if len(cards) == 0 {
 			return m, nil
 		}

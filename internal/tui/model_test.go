@@ -16,6 +16,18 @@ type nopCommander struct{}
 
 func (nopCommander) Submit(room.Command) {}
 
+// captureCommander records submitted commands for assertions.
+type captureCommander struct{ cmds []room.Command }
+
+func (c *captureCommander) Submit(cmd room.Command) { c.cmds = append(c.cmds, cmd) }
+
+func (c *captureCommander) last() room.Command {
+	if len(c.cmds) == 0 {
+		return nil
+	}
+	return c.cmds[len(c.cmds)-1]
+}
+
 func parseHand(t *testing.T, s string) []game.Card {
 	t.Helper()
 	cs, err := game.ParseCards(s)
@@ -251,6 +263,35 @@ func TestTurnActivatesAfterSlide(t *testing.T) {
 	}
 	if !strings.Contains(m.selfBand(), "[") {
 		t.Fatal("your hand should show the on-turn bracket after the card lands")
+	}
+}
+
+// TestEnterQuickPlaysCursorCard: with nothing selected, enter plays the single card
+// under the cursor; with a selection, enter plays the selection.
+func TestEnterQuickPlaysCursorCard(t *testing.T) {
+	cc := &captureCommander{}
+	m := New(cc, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.Update(protocol.StateSnapshotMsg{Snap: inGameSnap(1, parseHand(t, "3D 5C 7H TD"))})
+
+	// Nothing selected: enter quick-plays the card under the cursor.
+	m.cursor = 2
+	want := m.hand()[2]
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	pc, ok := cc.last().(room.PlayCmd)
+	if !ok {
+		t.Fatalf("enter should submit a PlayCmd, got %T", cc.last())
+	}
+	if len(pc.Cards) != 1 || pc.Cards[0] != want {
+		t.Fatalf("quick-play sent %v, want [%v]", pc.Cards, want)
+	}
+
+	// With a selection, enter plays the selection, not the cursor card.
+	cc.cmds = nil
+	m.selected[0], m.selected[1] = true, true
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if pc2, _ := cc.last().(room.PlayCmd); len(pc2.Cards) != 2 {
+		t.Fatalf("with a selection, enter should play the 2 selected cards, got %v", pc2.Cards)
 	}
 }
 

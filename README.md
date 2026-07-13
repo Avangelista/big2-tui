@@ -43,8 +43,9 @@ Headless (no local host, so the first person to connect becomes host):
 difficulty, `+`/`-` add/remove a bot (host), `esc` quit.
 
 **In-game:** `←`/`→` move the cursor (or scroll your hand when it isn't your turn),
-`space` select/deselect, `enter` play, `x` pass, `c` clear selection, `s` sort by
-rank or suit, `esc` quit.
+`space` select/deselect, `enter` play the selection (or the card under the cursor if
+nothing is selected), `x` pass, `c` clear selection, `s` sort by rank or suit,
+`esc` quit.
 
 **Between hands:** `enter` deals the next hand (host), `esc` quit.
 
