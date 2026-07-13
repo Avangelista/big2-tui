@@ -241,8 +241,8 @@ func TestTurnActivatesAfterSlide(t *testing.T) {
 	if !m.midPlaySlide() || m.isMyTurn() {
 		t.Fatal("turn should not activate while the card is still sliding in")
 	}
-	if strings.Contains(m.selfBand(), "[") {
-		t.Fatal("your hand should not show the on-turn bracket mid-slide")
+	if strings.Contains(m.selfBand(), "∙") {
+		t.Fatal("your hand should not show the on-turn cursor mid-slide")
 	}
 
 	for m.pileStep < pileSteps {
@@ -251,8 +251,8 @@ func TestTurnActivatesAfterSlide(t *testing.T) {
 	if m.midPlaySlide() || !m.isMyTurn() {
 		t.Fatal("turn should activate once the card lands")
 	}
-	if !strings.Contains(m.selfBand(), "[") {
-		t.Fatal("your hand should show the on-turn bracket after the card lands")
+	if !strings.Contains(m.selfBand(), "∙") {
+		t.Fatal("your hand should show the on-turn cursor after the card lands")
 	}
 }
 

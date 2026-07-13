@@ -37,14 +37,15 @@ func (m *Model) playerAtRel(rel int) protocol.PlayerView {
 	return m.snap.Players[(m.snap.YouSeat+rel)%n]
 }
 
-// label renders a player as "<L> <count>": on turn in [brackets], otherwise
-// space-padded to the same width so the layout never drifts as the turn moves.
+// label renders a player as "<L> <count>". The turn cue is colour - primary
+// (default fg) on turn, secondary (gray) off turn - so both states are the same
+// width and the layout never drifts as the turn moves.
 func (m *Model) label(p protocol.PlayerView) string {
 	inner := fmt.Sprintf("%c %d", m.letterFor(p.Seat), p.CardCount)
 	if m.showTurn(p) {
-		return m.st.primary.Render("[" + inner + "]") // active: primary, in brackets
+		return m.st.primary.Render(inner)
 	}
-	return m.st.secondary.Render(" " + inner + " ") // inactive: gray, same width
+	return m.st.secondary.Render(inner)
 }
 
 // showTurn reports whether p should be drawn as the active player: it is their turn
@@ -129,7 +130,11 @@ func (m *Model) renderGame() string {
 	// Bottom edge: an always-visible error line above the hand, centred over the
 	// table.
 	self := lipgloss.PlaceHorizontal(w, lipgloss.Center, m.selfBand())
-	footer := lipgloss.PlaceHorizontal(w, lipgloss.Center, m.st.secondary.Render(gameFooter(w)))
+	footerText := gameFooter(w)
+	if m.boss {
+		footerText = "" // the controls legend would give the game away; blank the row
+	}
+	footer := lipgloss.PlaceHorizontal(w, lipgloss.Center, m.st.secondary.Render(footerText))
 	bottom := lipgloss.JoinVertical(lipgloss.Left,
 		m.errorLine(w),
 		self,
@@ -646,13 +651,10 @@ func (m *Model) paintTagged(runes []rune, tags []uint8) string {
 	return b.String()
 }
 
-// markTier returns the colour tag for a last-play/status marker: the live direction
-// triangles read secondary, the recessive passed/disconnected marks read tertiary.
+// markTier returns the colour tag for a last-play/status marker: all of them
+// (direction triangles, passed ✗, disconnected ⊘) read secondary.
 func markTier(mark string) uint8 {
-	switch mark {
-	case "✗", "⊘":
-		return tagTertiary
-	case "":
+	if mark == "" {
 		return tagPlain
 	}
 	return tagSecondary
