@@ -216,6 +216,44 @@ func TestStaleSnapshotIgnored(t *testing.T) {
 	}
 }
 
+// TestTurnActivatesAfterSlide: the player the turn passes to only becomes active
+// (hand lifts, bracket shows) once the played card has finished sliding in.
+func TestTurnActivatesAfterSlide(t *testing.T) {
+	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Seat 1 plays; the turn passes to you (seat 0), and their card slides in.
+	s := protocol.StateSnapshot{
+		Phase: protocol.InGame, Rev: 1, YouSeat: 0,
+		Players: []protocol.PlayerView{
+			{Seat: 0, IsYou: true, IsTurn: true, CardCount: 3, Connected: true},
+			{Seat: 1, CardCount: 5, Connected: true},
+			{Seat: 2, CardCount: 6, Connected: true},
+			{Seat: 3, CardCount: 2, Connected: true},
+		},
+		YourHand: parseHand(t, "4D 4H 2S"),
+		Table:    parseHand(t, "6H 6S"), TableBy: 1, Turn: 0, Winner: -1,
+	}
+	m.Update(protocol.StateSnapshotMsg{Snap: s})
+
+	if !m.midPlaySlide() || m.isMyTurn() {
+		t.Fatal("turn should not activate while the card is still sliding in")
+	}
+	if strings.Contains(m.selfBand(), "[") {
+		t.Fatal("your hand should not show the on-turn bracket mid-slide")
+	}
+
+	for m.pileStep < pileSteps {
+		m.Update(pileAnimMsg{gen: m.pileGen})
+	}
+	if m.midPlaySlide() || !m.isMyTurn() {
+		t.Fatal("turn should activate once the card lands")
+	}
+	if !strings.Contains(m.selfBand(), "[") {
+		t.Fatal("your hand should show the on-turn bracket after the card lands")
+	}
+}
+
 // TestHandSortToggle: `s` flips the hand between rank order and suit order, keeping
 // the same cards selected and the cursor on the same card.
 func TestHandSortToggle(t *testing.T) {

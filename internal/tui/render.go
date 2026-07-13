@@ -38,10 +38,16 @@ func (m *Model) playerAtRel(rel int) protocol.PlayerView {
 // space-padded to the same width so the layout never drifts as the turn moves.
 func (m *Model) label(p protocol.PlayerView) string {
 	inner := fmt.Sprintf("%c %d", m.letterFor(p.Seat), p.CardCount)
-	if p.IsTurn {
+	if m.showTurn(p) {
 		return m.st.turn.Render("[" + inner + "]")
 	}
 	return " " + inner + " "
+}
+
+// showTurn reports whether p should be drawn as the active player: it is their turn
+// and no played card is still sliding in, so the turn cue waits for the card to land.
+func (m *Model) showTurn(p protocol.PlayerView) bool {
+	return p.IsTurn && !m.midPlaySlide()
 }
 
 // oppMark is a player's last-play marker pointing at the pile: arrow if they hold
@@ -158,7 +164,7 @@ func (m *Model) topBand(n, w int) string {
 	// The label rides row 0 and never moves (top and bot are the same width). The
 	// band is a fixed 2 rows so the board never shifts: on turn the open top grows
 	// down toward the centre, off turn a blank filler holds the second row.
-	if p.IsTurn {
+	if m.showTurn(p) {
 		// on turn: card grows into row 2, and an active player carries no marker.
 		return lipgloss.JoinVertical(lipgloss.Left, ftop+m.label(p), fbot)
 	}
@@ -229,11 +235,12 @@ func (m *Model) sideBlock(p protocol.PlayerView, budget int, leftSide bool) stri
 		return m.label(p) // no cards left (this player just won): label only
 	}
 	var fan []string
+	active := m.showTurn(p)
 	align, arrow := lipgloss.Left, ">"
 	if leftSide {
-		fan = vFanLeft(p.CardCount, budget, p.IsTurn)
+		fan = vFanLeft(p.CardCount, budget, active)
 	} else {
-		fan = vFanRight(p.CardCount, budget, p.IsTurn)
+		fan = vFanRight(p.CardCount, budget, active)
 		align, arrow = lipgloss.Right, "<"
 	}
 	// Last-play marker on the centre-facing side, vertically centred: ">"/"<"

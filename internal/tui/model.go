@@ -407,9 +407,19 @@ func (m *Model) keyGame(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// isMyTurn reports whether the game is live and it is this viewer's turn.
+// isMyTurn reports whether the game is live and it is this viewer's turn - and the
+// last play has finished sliding in, so the hand lifts only once the card lands.
 func (m *Model) isMyTurn() bool {
-	return m.snap != nil && m.snap.Phase == protocol.InGame && m.snap.Turn == m.snap.YouSeat
+	return m.snap != nil && m.snap.Phase == protocol.InGame &&
+		m.snap.Turn == m.snap.YouSeat && !m.midPlaySlide()
+}
+
+// midPlaySlide reports whether a played card is still sliding into the pile. While
+// it slides, the player it passed the turn to is not yet activated: their hand or
+// fan stays down and lifts only once the card lands (the player who played dropped
+// immediately, since the turn already moved off them).
+func (m *Model) midPlaySlide() bool {
+	return m.pileFinish == finishNone && len(m.pileCur) > 0 && m.pileStep < pileSteps
 }
 
 // setHint shows a transient hint, cleared after a few seconds unless a newer one
