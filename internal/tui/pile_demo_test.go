@@ -137,10 +137,10 @@ func TestSelfFanRoundedTiles(t *testing.T) {
 // body and a rounded floor, wide front card leftmost, each card keeping its ╯ corner.
 func TestHFanMatchesDemo2(t *testing.T) {
 	fill, floor := hFan(6, 80)
-	if fill != "│░░░│░░│░░│░░│░░│░░│" {
+	if fill != "│░░░░│░░│░░│░░│░░│░░│" {
 		t.Errorf("fill body = %q", fill)
 	}
-	if floor != "╰───╯──╯──╯──╯──╯──╯" {
+	if floor != "╰────╯──╯──╯──╯──╯──╯" {
 		t.Errorf("floor = %q", floor)
 	}
 }

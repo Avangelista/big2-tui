@@ -682,8 +682,8 @@ func hFan(count, w int) (fill, floor string) {
 		n = 1
 	}
 	var fb, fl strings.Builder
-	fb.WriteString("│░░░│") // wide front card
-	fl.WriteString("╰───╯")
+	fb.WriteString("│░░░░│") // wide front card (matches the pile/hand front card)
+	fl.WriteString("╰────╯")
 	for i := 1; i < n; i++ {
 		fb.WriteString("░░│") // sliver
 		fl.WriteString("──╯")
