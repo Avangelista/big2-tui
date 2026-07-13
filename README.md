@@ -62,7 +62,7 @@ nothing is selected), `x` pass, `c` clear selection, `s` sort by rank or suit,
 - Scored match: each hand, you take penalty points for the cards left in your hand
   (×2 at 8 to 9, ×3 at 10 to 12, ×4 at 13+). Totals carry over and the host deals
   again with **enter**; lowest total wins.
-- Drop out and your seat stays in as a dead player (`D`) that auto-passes, with no
+- Drop out and your seat stays in as a dead player (`⊘`) that auto-passes, with no
   rejoining.
 
 ## Layout
