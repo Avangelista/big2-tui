@@ -696,33 +696,49 @@ func hFan(count, w int) (fill, floor string) {
 // body toward the centre; off turn it shrinks so the card recedes to the anchored
 // left edge.
 func vFanLeft(count, budget int, active bool) []string {
-	body, gap := "─", " "
+	// Each card shows its centre-facing (right) edge: a ╮ top corner then │ borders,
+	// the wide front card (4 rows, ╮││╯) at the bottom, slivers (2 rows, ╮│) above.
+	// On their turn the body opens toward the centre with ──/░ (only the ░ is blue).
+	top, border, bot := "╮", "│", "╯"
 	if active {
-		body, gap = "░░░", "   " // reaches toward centre, ░ pattern on their turn
+		top, border, bot = "──╮", "░ │", "──╯"
 	}
-	cards := clampi(count, 1, maxi(budget-2, 1))
-	rows := make([]string, 0, cards+2)
-	rows = append(rows, body)
-	for i := 1; i < cards; i++ {
-		rows = append(rows, body+"│")
+	slivers := vFanSlivers(count, budget)
+	rows := make([]string, 0, 2*slivers+4)
+	for i := 0; i < slivers; i++ {
+		rows = append(rows, top, border)
 	}
-	rows = append(rows, gap+"│", body+"│") // larger front card at the bottom
+	rows = append(rows, top, border, border, bot) // wide front card, at the bottom
 	return rows
+}
+
+// vFanSlivers is how many 2-row sliver backs fit above/below the 4-row front card.
+func vFanSlivers(count, budget int) int {
+	n := (budget - 4) / 2
+	if n < 0 {
+		n = 0
+	}
+	if n > count-1 {
+		n = count - 1
+	}
+	return n
 }
 
 // vFanRight mirrors vFanLeft for the right opponent: larger front card at the top,
 // slivers showing the centre-facing left edge, receding to the anchored right edge
 // off turn.
 func vFanRight(count, budget int, active bool) []string {
-	body, gap := "─", " "
+	// Mirror of vFanLeft: the centre-facing edge is the left (╭ │ ╰), the wide front
+	// card (4 rows) is at the top, slivers below, and the body opens to the right.
+	top, border, bot := "╭", "│", "╰"
 	if active {
-		body, gap = "░░░", "   "
+		top, border, bot = "╭──", "│ ░", "╰──"
 	}
-	slivers := clampi(count-1, 0, maxi(budget-3, 0))
-	rows := make([]string, 0, slivers+3)
-	rows = append(rows, " "+body, "│"+gap, "│"+body) // larger front card at the top
+	slivers := vFanSlivers(count, budget)
+	rows := make([]string, 0, 2*slivers+4)
+	rows = append(rows, top, border, border, bot) // wide front card, at the top
 	for i := 0; i < slivers; i++ {
-		rows = append(rows, "│"+body)
+		rows = append(rows, top, border)
 	}
 	return rows
 }
