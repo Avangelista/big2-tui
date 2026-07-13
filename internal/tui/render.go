@@ -437,30 +437,43 @@ func (m *Model) selfBand() string {
 		moreLeft, moreRight = start > 0, end < len(hand)
 	}
 
-	rows := m.selfFan(hand, start, end, m.cursor, myTurn)
+	runeRows, tagRows := m.selfFan(hand, start, end, m.cursor, myTurn)
 	if !myTurn {
 		// Off turn the hand drops a row and sheds its cursor row; selfFan puts the
 		// top border at [1] and faces at [2], with the last-play marker ("^" played,
 		// "X" passed) riding just above.
-		marker := ""
-		if mk := m.oppMark(me, "^"); mk != "" {
-			marker = lipgloss.PlaceHorizontal(len(rows[0]), lipgloss.Center, mk)
+		totalW := len(runeRows[0])
+		mrow, mtag := make([]rune, totalW), make([]uint8, totalW)
+		for i := range mrow {
+			mrow[i] = ' '
 		}
-		rows = []string{"", marker, rows[1], rows[2]}
+		if mk := m.oppMark(me, "^"); mk != "" {
+			mrow[(totalW-1)/2] = []rune(mk)[0]
+		}
+		runeRows = [][]rune{{}, mrow, runeRows[1], runeRows[2]}
+		tagRows = [][]uint8{{}, mtag, tagRows[1], tagRows[2]}
 	}
 	// 2-col left margin keeps the fan aligned. The "<"/">" scroll flags ride on row
-	// 2 either way (the face row on turn, a row above the dropped cards off turn).
-	for r := range rows {
-		rows[r] = "  " + rows[r]
+	// 2 either way (the face row on turn, a row above the dropped cards off turn),
+	// overwriting the margin. All edits stay in the rune/tag domain so painting can
+	// come last (a byte-slice of a coloured row would corrupt the escapes).
+	for r := range runeRows {
+		runeRows[r] = append([]rune{' ', ' '}, runeRows[r]...)
+		tagRows[r] = append([]uint8{tagPlain, tagPlain}, tagRows[r]...)
 	}
 	if moreLeft {
-		rows[2] = "< " + rows[2][2:]
+		runeRows[2][0], runeRows[2][1] = '<', ' '
 	}
 	if moreRight {
-		rows[2] += " >"
+		runeRows[2] = append(runeRows[2], ' ', '>')
+		tagRows[2] = append(tagRows[2], tagPlain, tagPlain)
 	}
-	rows[3] += label
-	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+	painted := make([]string, len(runeRows))
+	for r := range runeRows {
+		painted[r] = m.paintTagged(runeRows[r], tagRows[r])
+	}
+	painted[3] += label
+	return lipgloss.JoinVertical(lipgloss.Left, painted...)
 }
 
 // maxHandCells is how many hand cards fit across the screen, reserving the 2-col
@@ -474,79 +487,136 @@ func (m *Model) maxHandCells() int {
 	return n
 }
 
-// selfFan renders the windowed hand as a fixed 4-row fan (top border, face, body,
-// bottom). An unselected card sits low, its bottom border off-grid past the
-// divider; a selected card lifts to row 0 so its whole box shows. The cursor card
-// carries a "*" on its body row.
-func (m *Model) selfFan(hand []game.Card, start, end, cursor int, showCursor bool) []string {
+// colour tags for a composited fan cell.
+const (
+	tagPlain uint8 = iota
+	tagRed
+	tagCursor
+	tagSelected
+)
+
+// selfFan renders the windowed hand as a fixed 4-row fan of rounded tiles. Each card
+// is its own ╭─╮│╰╯ box, so overlaps keep a rounded background; an unselected card
+// sits low (its bottom ╰── off-grid past the divider), a selected card lifts to row 0
+// so its whole box (and bottom) shows and pops above the row. The cursor card carries
+// a "*" on its body row. Returns the rune grid and a parallel colour-tag grid;
+// painting is deferred so selfBand can still edit rows structurally.
+func (m *Model) selfFan(hand []game.Card, start, end, cursor int, showCursor bool) ([][]rune, [][]uint8) {
 	count := end - start
 	totalW := 3*(count-1) + 6 // last card sits at 3*(count-1), front cell is 6 wide
-	rows := make([][]byte, 4)
+	rows := make([][]rune, 4)
+	tags := make([][]uint8, 4)
 	for r := range rows {
-		rows[r] = []byte(strings.Repeat(" ", totalW))
+		rows[r] = []rune(strings.Repeat(" ", totalW))
+		tags[r] = make([]uint8, totalW)
 	}
-	put := func(r, c int, ch byte) {
+	put := func(r, c int, g rune, tag uint8) {
 		if r >= 0 && r < 4 && c >= 0 && c < totalW {
-			rows[r][c] = ch
+			rows[r][c] = g
+			tags[r][c] = tag
 		}
 	}
 	for j := 0; j < count; j++ {
 		i := start + j
 		L := 3 * j
 		faceW := 2
-		if j == count-1 {
+		front := j == count-1
+		if front {
 			faceW = 4 // the front "big" card
 		}
-		topRow := 1
+		t := 1
 		if m.selected[i] {
-			topRow = 0 // selected: lifted up one row
+			t = 0 // selected: lifted up one row
 		}
-		faceRow, bodyRow, botRow := topRow+1, topRow+2, topRow+3
-		// Left border runs down the card's visible body (put ignores botRow==4).
-		put(faceRow, L, '|')
-		put(bodyRow, L, '|')
-		put(botRow, L, '|')
-		// Top border, extended to bridge the diagonal down to a lower next card.
-		topEnd := L + faceW
-		if j < count-1 {
-			nextTop := 1
-			if m.selected[start+j+1] {
-				nextTop = 0
-			}
-			switch {
-			case nextTop > topRow: // next card is lower: roof slopes down to it
-				topEnd = L + 4
-			case nextTop == topRow: // same level: meet the next card's left edge
-				topEnd = L + 3
-			}
+		faceRow, bodyRow, botRow := t+1, t+2, t+3
+		ctag := tagPlain
+		if m.selected[i] {
+			ctag = tagSelected
 		}
-		for c := L + 1; c <= topEnd; c++ {
-			put(topRow, c, '_')
-		}
-		// Face (2 glyphs; the front card leaves its extra width blank).
-		face := hand[i].String()
-		put(faceRow, L+1, face[0])
-		put(faceRow, L+2, face[1])
-		// Cursor marker on the body, lower-left of the face.
 		if showCursor && i == cursor {
-			put(bodyRow, L+1, '*')
+			ctag = tagCursor
 		}
-		// Bottom border - only lands on-grid for a lifted (selected) card.
+		// Roof ╭──, opened to ╭────╮ when this lifted card pops a row above a lower
+		// next card; left/bottom │…╰── (the bottom is on-grid only when lifted).
+		open := false
+		if !front {
+			nextT := 1
+			if m.selected[start+j+1] {
+				nextT = 0
+			}
+			open = t < nextT
+		}
+		roofEnd := L + faceW
+		if open {
+			roofEnd = L + 4
+		}
+		put(t, L, '╭', ctag)
+		for c := L + 1; c <= roofEnd; c++ {
+			put(t, c, '─', ctag)
+		}
+		if front || open {
+			put(t, roofEnd+1, '╮', ctag)
+		}
+		put(faceRow, L, '│', ctag)
+		put(bodyRow, L, '│', ctag)
+		put(botRow, L, '╰', ctag)
 		for c := L + 1; c <= L+faceW; c++ {
-			put(botRow, c, '_')
+			put(botRow, c, '─', ctag)
 		}
-		if j == count-1 {
+		if front { // the "big" card closes its own right edge
 			rb := L + faceW + 1
-			put(faceRow, rb, '|')
-			put(bodyRow, rb, '|')
-			put(botRow, rb, '|')
+			put(faceRow, rb, '│', ctag)
+			put(bodyRow, rb, '│', ctag)
+			put(botRow, rb, '╯', ctag)
+		}
+		// Face glyphs; the suit carries its own red tag independent of the border.
+		face := hand[i]
+		put(faceRow, L+1, face.Rank.Rune(), tagPlain)
+		suitTag := tagPlain
+		if face.Suit.IsRed() {
+			suitTag = tagRed
+		}
+		put(faceRow, L+2, m.suitRune(face.Suit), suitTag)
+		if showCursor && i == cursor {
+			put(bodyRow, L+1, '*', tagCursor)
 		}
 	}
-	out := make([]string, 4)
-	for r := range rows {
-		out[r] = string(rows[r])
+	return rows, tags
+}
+
+// paintTagged renders a fan row from its runes and colour tags: red suits, cyan
+// cursor, yellow selected, with pips given text presentation (VS15). Adjacent
+// same-tag cells are grouped so each colour run is one escape.
+func (m *Model) paintTagged(runes []rune, tags []uint8) string {
+	var b strings.Builder
+	for i := 0; i < len(runes); {
+		t := tags[i]
+		j := i
+		for j < len(runes) && tags[j] == t {
+			j++
+		}
+		var seg strings.Builder
+		for _, r := range runes[i:j] {
+			seg.WriteRune(r)
+			if !m.asciiSuits {
+				if _, isSuit := m.suitInfo(r); isSuit {
+					seg.WriteString(vs15)
+				}
+			}
+		}
+		s := seg.String()
+		switch t {
+		case tagRed:
+			s = m.st.suitRed.Render(s)
+		case tagCursor:
+			s = m.st.cursor.Render(s)
+		case tagSelected:
+			s = m.st.selected.Render(s)
+		}
+		b.WriteString(s)
+		i = j
 	}
-	return out
+	return b.String()
 }
 
 // errorLine is the always-visible line above the hand for inline errors (e.g.

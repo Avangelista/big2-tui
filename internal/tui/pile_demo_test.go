@@ -101,6 +101,29 @@ func TestPileBoxMatchesDemo(t *testing.T) {
 	}
 }
 
+// TestSelfFanRoundedTiles checks the fan draws each card as a plain rounded tile,
+// with a selected card popping up a row and no ┤/┴ joiners. Hand 4♦ 7♣ 9♥ J♠ 2♠,
+// cursor on 7♣ (index 1), 9♥ (index 2) selected/lifted.
+func TestSelfFanRoundedTiles(t *testing.T) {
+	m := &Model{selected: map[int]bool{2: true}} // glyph mode
+	hand := cards("4D", "7C", "9H", "JS", "2S")
+	rows, _ := m.selfFan(hand, 0, len(hand), 1, true)
+	got := make([]string, len(rows))
+	for i, r := range rows {
+		got[i] = string(r)
+	}
+	want := []string{
+		"      ╭────╮      ",
+		"╭──╭──│9♥╭──╭────╮",
+		"│4♦│7♣│  │J♠│2♠  │",
+		"│  │* ╰──│  │    │",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("self-fan mismatch:\n got:\n%s\nwant:\n%s",
+			strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 // TestPileFloatWidthInvariant checks the animated pile row is exactly w cells wide
 // (colour escapes and VS15 are width-0) at every slide step, in both suit modes.
 func TestPileFloatWidthInvariant(t *testing.T) {

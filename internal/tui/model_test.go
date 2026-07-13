@@ -513,7 +513,7 @@ func TestOnlyWinnerHandHidden(t *testing.T) {
 	if !strings.Contains(m.sideBlock(m.playerAtRel(3), 8, false), "|") {
 		t.Error("right opponent still holds cards and should show them")
 	}
-	if !strings.Contains(m.selfBand(), "|") {
+	if !strings.Contains(m.selfBand(), "│") {
 		t.Error("your own hand still holds cards and should show them")
 	}
 	if pileColOf(m.renderGame(), "2H") < 0 {
