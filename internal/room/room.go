@@ -218,12 +218,6 @@ func (r *Room) handlePlay(c PlayCmd) {
 	}
 	r.applyEvents(evs)
 	r.trickReveal = nil // a fresh play ends any pending trick-won hold
-	// If the turn now rests on a disconnected seat, the upcoming auto-advance may
-	// resolve the trick in this same step and clear the table. Show the play first so
-	// clients can animate it before it vanishes.
-	if r.phase == protocol.InGame && r.game.Table != nil && !r.seats[r.game.Turn].Connected {
-		r.fanout()
-	}
 	r.afterTransition()
 }
 
@@ -342,7 +336,9 @@ func (r *Room) promoteHost() {
 // afterTransition runs after any state change: fast-forward disconnected humans
 // synchronously, schedule the bot the turn now rests on (if any), then fan out.
 func (r *Room) afterTransition() {
-	r.autoAdvanceForDisconnected()
+	if r.autoAdvanceForDisconnected() {
+		return // a trick-won hold was started; trickReset will resume play
+	}
 	r.maybeScheduleBot()
 	r.fanout()
 }
@@ -350,19 +346,27 @@ func (r *Room) afterTransition() {
 // autoAdvanceForDisconnected keeps play moving on a *disconnected* seat's turn
 // (bots are Connected, so they are never swept here — they use the delayed
 // scheduler instead).
-func (r *Room) autoAdvanceForDisconnected() {
+// autoAdvanceForDisconnected keeps play moving on a disconnected seat's turn. It
+// returns true if a forced pass won a trick and a trick-won hold was started, so the
+// caller skips its own fanout (the trickReset resumes play a beat later).
+func (r *Room) autoAdvanceForDisconnected() bool {
 	guard := 0
 	for r.phase == protocol.InGame && !r.seats[r.game.Turn].Connected {
 		guard++
 		if guard > 500 {
-			return
+			return false
 		}
+		table, passed, seat := r.game.Table, append([]bool(nil), r.game.Passed...), int(r.game.Turn)
 		evs := r.forcedMove(r.game.Turn)
 		if evs == nil {
-			return
+			return false
 		}
 		r.applyEvents(evs)
+		if r.beginTrickReveal(evs, table, passed, seat) {
+			return true
+		}
 	}
+	return false
 }
 
 // forcedMove applies a guaranteed-legal fallback for seat: pass while following,

@@ -94,6 +94,60 @@ func TestTrickWonHold(t *testing.T) {
 	}
 }
 
+// TestDisconnectedTrickWinHeld: when a play wins a trick because the remaining
+// opponents are disconnected and auto-pass, the completed trick is held on screen
+// (the winning card, no active turn) rather than collapsing straight to the reset -
+// so the play still animates on every client.
+func TestDisconnectedTrickWinHeld(t *testing.T) {
+	r := New(2, 2, mrand.New(mrand.NewSource(3)))
+	r.trickDelay = time.Hour // hold so we can inspect the reveal deterministically
+
+	a, b := NewID(), NewID()
+	r.Submit(JoinCmd{ID: a, Host: true})
+	r.Submit(JoinCmd{ID: b})
+	r.Submit(StartCmd{ID: a})
+	r.Submit(DisconnectCmd{ID: b}) // b drops; its turns now auto-pass/lead
+
+	for i := 0; i < 60; i++ {
+		snap := r.Query(a)
+		if snap.Phase != protocol.InGame {
+			t.Fatal("game ended before a trick was held")
+		}
+		if snap.Turn == -1 { // a trick is being held (reveal)
+			if len(snap.Table) == 0 {
+				t.Fatal("held trick should still show the winning card")
+			}
+			return // success: the disconnected trick win was held, not collapsed
+		}
+		if snap.Turn != 0 {
+			t.Fatalf("turn %d rests on the disconnected seat; auto-advance failed", snap.Turn)
+		}
+		hand := r.Query(a).YourHand
+		if len(hand) == 0 {
+			t.Fatal("a ran out of cards before a trick was held")
+		}
+		if len(snap.Table) == 0 {
+			r.Submit(PlayCmd{ID: a, Cards: []game.Card{hand[0]}}) // lead lowest
+			continue
+		}
+		played := false
+		if len(snap.Table) == 1 {
+			tbl, _ := game.Classify(snap.Table, game.SimpleStraight)
+			for _, c := range hand {
+				if cc, _ := game.Classify([]game.Card{c}, game.SimpleStraight); cc.Beats(tbl) {
+					r.Submit(PlayCmd{ID: a, Cards: []game.Card{c}})
+					played = true
+					break
+				}
+			}
+		}
+		if !played {
+			r.Submit(PassCmd{ID: a})
+		}
+	}
+	t.Fatal("expected a held disconnected-trick reveal within the budget")
+}
+
 // TestHostLeavesLobbyPromotes: when the host leaves the waiting room, a remaining
 // player is promoted so the room stays startable (regression: serve-only orphan).
 func TestHostLeavesLobbyPromotes(t *testing.T) {
