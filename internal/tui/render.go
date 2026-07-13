@@ -13,6 +13,8 @@ import (
 const (
 	minW = 34
 	minH = 14 // top band 2 + side fans >=5 + bottom (error 1 + hand 4 + footer 1)
+
+	vs15 = "︎" // variation selector-15: request text (not emoji) glyph, width-1
 )
 
 // ---- player letters & labels ----
@@ -256,38 +258,71 @@ func (m *Model) sideBlock(p protocol.PlayerView, budget int, leftSide bool) stri
 	return lipgloss.JoinVertical(align, append(fan, m.label(p))...)
 }
 
-// pileBoxLines renders one played combo as the 4 rows of a horizontal face-up box:
+// pileBoxLines renders one played combo as the 4 rows of a horizontal face-up box.
+// Each card is its own rounded tile; overlapping cards keep their own ╭/╰ corners
+// (a "rounded background"), and the front card widens by two to match the hand:
 //
-//	 __________
-//	|4D|4H|2S  |
-//	|  |  |    |
-//	|__|__|____|
-func pileBoxLines(cs []game.Card) []string {
+//	╭──╭──╭────╮
+//	│4♦│4♥│2♠  │
+//	│  │  │    │
+//	╰──╰──╰────╯
+//
+// Widths match the old ASCII box exactly (non-front 3 cells, front 6), so the pile
+// centring and slide math are untouched. Suit colour/text-presentation is applied
+// later by paintPileRow; these lines are bare width-1 runes.
+func (m *Model) pileBoxLines(cs []game.Card) []string {
 	if len(cs) == 0 {
 		return nil
 	}
-	var faces, blanks, bottom strings.Builder
-	faces.WriteByte('|')
-	blanks.WriteByte('|')
-	bottom.WriteByte('|')
+	var top, face, body, bottom strings.Builder
 	for i, c := range cs {
-		faces.WriteString(c.String())
-		under, blank := "__", "  "
-		if i == len(cs)-1 { // wider "big" front card, matching the hand
-			faces.WriteString("  ")
-			under, blank = "____", "    "
+		face.WriteRune('│')
+		face.WriteRune(c.Rank.Rune())
+		face.WriteRune(m.suitRune(c.Suit))
+		if i == len(cs)-1 { // wider "big" front card
+			top.WriteString("╭────╮")
+			face.WriteString("  │")
+			body.WriteString("│    │")
+			bottom.WriteString("╰────╯")
+		} else {
+			top.WriteString("╭──")
+			body.WriteString("│  ")
+			bottom.WriteString("╰──")
 		}
-		faces.WriteByte('|')
-		blanks.WriteString(blank + "|")
-		bottom.WriteString(under + "|")
 	}
-	w := lipgloss.Width(faces.String())
-	return []string{
-		" " + strings.Repeat("_", w-2),
-		faces.String(),
-		blanks.String(),
-		bottom.String(),
+	return []string{top.String(), face.String(), body.String(), bottom.String()}
+}
+
+// paintPileRow renders a composited pile row: suit pips are coloured (red for
+// hearts/diamonds) and given text presentation; borders and ranks keep the default
+// foreground. Colouring the pile is a pure function of the rune - it carries no
+// per-card cursor/selection state - so no tag grid is needed here.
+func (m *Model) paintPileRow(row []rune) string {
+	var b strings.Builder
+	for i := 0; i < len(row); {
+		if red, isSuit := m.suitInfo(row[i]); isSuit {
+			cell := string(row[i])
+			if !m.asciiSuits {
+				cell += vs15 // text (not emoji) presentation, keeps the pip width-1
+			}
+			if red {
+				cell = m.st.suitRed.Render(cell)
+			}
+			b.WriteString(cell)
+			i++
+			continue
+		}
+		j := i
+		for j < len(row) {
+			if _, isSuit := m.suitInfo(row[j]); isSuit {
+				break
+			}
+			j++
+		}
+		b.WriteString(string(row[i:j]))
+		i = j
 	}
+	return b.String()
 }
 
 // pileFloat draws the pile in a w x h block. The current play rests centred; when a
@@ -297,16 +332,16 @@ func pileBoxLines(cs []game.Card) []string {
 // It opaquely covers the play it beat; within a trick every play is the same size,
 // so at rest the incoming card covers the previous one exactly - no visible stack.
 func (m *Model) pileFloat(w, h int) string {
-	grid := make([][]byte, h)
+	grid := make([][]rune, h)
 	for r := range grid {
-		grid[r] = []byte(strings.Repeat(" ", w))
+		grid[r] = []rune(strings.Repeat(" ", w))
 	}
 	// The play being covered sits centred underneath the incoming card.
-	if prev := pileBoxLines(m.pilePrev); len(prev) > 0 {
+	if prev := m.pileBoxLines(m.pilePrev); len(prev) > 0 {
 		pasteBox(grid, prev, (w-boxWidth(prev))/2, (h-len(prev))/2)
 	}
 	// The current play glides from its side (step 0) to centre (step pileSteps).
-	if box := pileBoxLines(m.pileCur); len(box) > 0 {
+	if box := m.pileBoxLines(m.pileCur); len(box) > 0 {
 		bw, bh := boxWidth(box), len(box)
 		endX, endY := (w-bw)/2, (h-bh)/2
 		startX, startY := endX, endY
@@ -329,17 +364,18 @@ func (m *Model) pileFloat(w, h int) string {
 	}
 	out := make([]string, h)
 	for r := range grid {
-		out[r] = string(grid[r])
+		out[r] = m.paintPileRow(grid[r])
 	}
 	return strings.Join(out, "\n")
 }
 
-// boxWidth is the widest line in a rendered card box.
+// boxWidth is the widest line in a rendered card box, in display cells. Every glyph
+// in a box is width-1, so the rune count is the display width.
 func boxWidth(box []string) int {
 	w := 0
 	for _, l := range box {
-		if len(l) > w {
-			w = len(l)
+		if n := len([]rune(l)); n > w {
+			w = n
 		}
 	}
 	return w
@@ -347,8 +383,9 @@ func boxWidth(box []string) int {
 
 // pasteBox draws box opaquely at (x0,y0) onto grid, clipped to the grid. Every cell
 // is written, including the card's blank body, so it hides whatever is behind it - a
-// card in front, not a stack.
-func pasteBox(grid [][]byte, box []string, x0, y0 int) {
+// card in front, not a stack. The grid is one rune per display cell, so multi-byte
+// pips are copied and clipped whole (never split mid-rune).
+func pasteBox(grid [][]rune, box []string, x0, y0 int) {
 	h := len(grid)
 	w := 0
 	if h > 0 {
@@ -359,9 +396,9 @@ func pasteBox(grid [][]byte, box []string, x0, y0 int) {
 		if gy < 0 || gy >= h {
 			continue
 		}
-		for c := 0; c < len(line); c++ {
+		for c, ch := range []rune(line) {
 			if gx := x0 + c; gx >= 0 && gx < w {
-				grid[gy][gx] = line[c]
+				grid[gy][gx] = ch
 			}
 		}
 	}

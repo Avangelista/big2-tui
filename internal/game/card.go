@@ -48,6 +48,17 @@ func (c Card) Order() int { return int(c.Rank)*4 + int(c.Suit) }
 
 var rankLabels = [...]string{"3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A", "2"}
 var suitLabels = [...]string{"D", "C", "H", "S"}
+var suitGlyphs = [...]rune{'♦', '♣', '♥', '♠'} // display pips; same order as suitLabels
+
+// Rune is the rank's single display character (ten is 'T'); every rank is 1 cell.
+func (r Rank) Rune() rune { return rune(rankLabels[r][0]) }
+
+// Glyph is the suit's card pip (♦ ♣ ♥ ♠), for display only. The wire/log path uses
+// String()/suitLabels.
+func (s Suit) Glyph() rune { return suitGlyphs[s] }
+
+// IsRed reports whether the suit is drawn red (diamonds, hearts).
+func (s Suit) IsRed() bool { return s == Diamond || s == Heart }
 
 // String renders a rank; ten is "T".
 func (r Rank) String() string { return rankLabels[r] }
