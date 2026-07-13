@@ -1,16 +1,46 @@
 package tui
 
 import (
+	"io"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/Avangelista/deuception/internal/game"
 	"github.com/Avangelista/deuception/internal/protocol"
 	"github.com/Avangelista/deuception/internal/room"
 )
+
+// TestBossHidePlainAndAligned: the boss-key frame carries no escapes and every row
+// keeps the same display width as the live (coloured, glyph) frame, so the disguise
+// is column-identical plain text.
+func TestBossHidePlainAndAligned(t *testing.T) {
+	r := lipgloss.NewRenderer(io.Discard)
+	r.SetColorProfile(termenv.ANSI256)
+	m := New(nopCommander{}, "id", "hint", r)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.Update(protocol.StateSnapshotMsg{Snap: fourPTableSnap(1,
+		parseHand(t, "4D 4H 5C 8D TS JH 2S"), parseHand(t, "6H 6S"), 1)})
+	m.pileStep = pileSteps
+	live := m.View()
+	m.boss = true
+	boss := m.View()
+	if strings.ContainsRune(boss, 0x1b) {
+		t.Error("boss frame should carry no colour escapes")
+	}
+	lv, bv := strings.Split(live, "\n"), strings.Split(boss, "\n")
+	if len(lv) != len(bv) {
+		t.Fatalf("line count differs: live %d boss %d", len(lv), len(bv))
+	}
+	for i := range lv {
+		if lipgloss.Width(lv[i]) != lipgloss.Width(bv[i]) {
+			t.Errorf("row %d width differs: live %d boss %d", i, lipgloss.Width(lv[i]), lipgloss.Width(bv[i]))
+		}
+	}
+}
 
 type nopCommander struct{}
 
@@ -105,42 +135,9 @@ func tableSnap(rev int, yourHand, table []game.Card, tableBy int) protocol.State
 	}
 }
 
-// cardCol returns the leftmost column of "|<face>" for face in a rendered frame, or
-// -1. Used to track where the pile card sits.
-func cardCol(frame, face string) int {
-	needle := "|" + face
-	best := -1
-	for _, line := range splitLines(frame) {
-		if i := indexOf(line, needle); i >= 0 {
-			if best == -1 || i < best {
-				best = i
-			}
-		}
-	}
-	return best
-}
-
-func splitLines(s string) []string {
-	var out, cur = []string{}, []rune{}
-	for _, r := range s {
-		if r == '\n' {
-			out = append(out, string(cur))
-			cur = cur[:0]
-		} else {
-			cur = append(cur, r)
-		}
-	}
-	return append(out, string(cur))
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
-}
+// cardCol returns the leftmost display column of a card's face in a rendered frame,
+// or -1. Used to track where the pile card sits. (Glyph/colour-aware: see pileColOf.)
+func cardCol(frame, face string) int { return pileColOf(frame, face) }
 
 // TestPileSlidesFromSideToCentre: a play by the top opponent (seat 1, drawn above)
 // starts at the top of the mid region and glides to centre; at rest it is centred
@@ -173,14 +170,7 @@ func TestPileSlidesFromSideToCentre(t *testing.T) {
 	// The card starts fully above the block (off-screen, clipped), so it isn't drawn
 	// at step 0. Track the "6H" face row once it appears: it must only move down
 	// (a top play slides in from the top) and finish below where it first showed.
-	rowOf := func() int {
-		for r, line := range splitLines(m.View()) {
-			if indexOf(line, "|6H") >= 0 {
-				return r
-			}
-		}
-		return -1
-	}
+	rowOf := func() int { return pileRowOf(m.View(), "6H") }
 	if rowOf() >= 0 {
 		t.Fatal("incoming card should start off-screen (clipped), not fully drawn")
 	}
@@ -251,8 +241,8 @@ func TestTurnActivatesAfterSlide(t *testing.T) {
 	if !m.midPlaySlide() || m.isMyTurn() {
 		t.Fatal("turn should not activate while the card is still sliding in")
 	}
-	if strings.Contains(m.selfBand(), "[") {
-		t.Fatal("your hand should not show the on-turn bracket mid-slide")
+	if strings.Contains(m.selfBand(), "∙") {
+		t.Fatal("your hand should not show the on-turn cursor mid-slide")
 	}
 
 	for m.pileStep < pileSteps {
@@ -261,8 +251,8 @@ func TestTurnActivatesAfterSlide(t *testing.T) {
 	if m.midPlaySlide() || !m.isMyTurn() {
 		t.Fatal("turn should activate once the card lands")
 	}
-	if !strings.Contains(m.selfBand(), "[") {
-		t.Fatal("your hand should show the on-turn bracket after the card lands")
+	if !strings.Contains(m.selfBand(), "∙") {
+		t.Fatal("your hand should show the on-turn cursor after the card lands")
 	}
 }
 
@@ -403,14 +393,7 @@ func TestPileSelfPlaySlidesUp(t *testing.T) {
 	if m.pileDir != [2]int{0, 1} {
 		t.Fatalf("self-play direction = %v, want {0,1}", m.pileDir)
 	}
-	rowOf := func() int {
-		for r, line := range splitLines(m.View()) {
-			if indexOf(line, "|6H") >= 0 {
-				return r
-			}
-		}
-		return -1
-	}
+	rowOf := func() int { return pileRowOf(m.View(), "6H") }
 	firstRow, lastRow := -1, -1
 	for m.pileStep < pileSteps {
 		m.Update(pileAnimMsg{gen: m.pileGen})
@@ -437,15 +420,7 @@ func TestPileSelfPlaySlidesUp(t *testing.T) {
 func TestPileHorizontalSlides(t *testing.T) {
 	hand := parseHand(t, "4D 4H 5C 8D TS JH 2S")
 	table := parseHand(t, "6H 6S")
-	colOf := func(m *Model) int {
-		best := -1
-		for _, line := range splitLines(m.View()) {
-			if i := indexOf(line, "|6H"); i >= 0 && (best == -1 || i < best) {
-				best = i
-			}
-		}
-		return best
-	}
+	colOf := func(m *Model) int { return pileColOf(m.View(), "6H") }
 	run := func(tableBy int, wantDir [2]int, leftward bool) {
 		m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
 		m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -559,19 +534,19 @@ func TestOnlyWinnerHandHidden(t *testing.T) {
 	m.Update(protocol.StateSnapshotMsg{Snap: win})
 	m.pileStep = pileSteps // land the slide
 
-	if strings.Contains(m.topBand(4, 80), "|") {
+	if strings.Contains(m.topBand(4, 80), "│") {
 		t.Error("the winner's hand (0 cards) should show no cards")
 	}
-	if !strings.Contains(m.sideBlock(m.playerAtRel(1), 8, true), "|") {
+	if !strings.Contains(m.sideBlock(m.playerAtRel(1), 8, true), "│") {
 		t.Error("left opponent still holds cards and should show them")
 	}
-	if !strings.Contains(m.sideBlock(m.playerAtRel(3), 8, false), "|") {
+	if !strings.Contains(m.sideBlock(m.playerAtRel(3), 8, false), "│") {
 		t.Error("right opponent still holds cards and should show them")
 	}
-	if !strings.Contains(m.selfBand(), "|") {
+	if !strings.Contains(m.selfBand(), "│") {
 		t.Error("your own hand still holds cards and should show them")
 	}
-	if !strings.Contains(m.renderGame(), "2H") {
+	if pileColOf(m.renderGame(), "2H") < 0 {
 		t.Error("winning card should still land in the pile")
 	}
 
@@ -589,10 +564,10 @@ func TestOnlyWinnerHandHidden(t *testing.T) {
 	selfWin.Table = parseHand(t, "2S")
 	selfWin.TableBy, selfWin.Turn, selfWin.Winner = 0, 0, 0
 	m.Update(protocol.StateSnapshotMsg{Snap: selfWin})
-	if strings.Contains(m.selfBand(), "|") {
+	if strings.Contains(m.selfBand(), "│") {
 		t.Error("your emptied hand should show no cards")
 	}
-	if !strings.Contains(m.sideBlock(m.playerAtRel(1), 8, true), "|") {
+	if !strings.Contains(m.sideBlock(m.playerAtRel(1), 8, true), "│") {
 		t.Error("opponents who still hold cards should show them when you win")
 	}
 }

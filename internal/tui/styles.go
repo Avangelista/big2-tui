@@ -4,15 +4,25 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// styles is deliberately plain - no colour, no bold - so the board reads like
-// ordinary terminal output.
+// styles is a two-step gray text hierarchy over the default foreground, plus the two
+// card accents (red faces, blue ░ back). primary is the default fg (max contrast on
+// any theme); secondary/tertiary recede to gray for peripheral text and markers.
+// Card selection is geometry (the lift), not colour.
 type styles struct {
-	faint lipgloss.Style
-	turn  lipgloss.Style
+	primary   lipgloss.Style // default fg: labels on turn, faces, prompts, headlines
+	secondary lipgloss.Style // gray: footer, inactive labels, markers, cursor
+	tertiary  lipgloss.Style // dim gray: passed/gone/scroll, empty seats
+	suitRed   lipgloss.Style // red card faces: hearts, diamonds
+	back      lipgloss.Style // opponent card-back ░ on their turn
 }
 
 func newStyles(r *lipgloss.Renderer) styles {
-	// emphasis comes from layout (e.g. [brackets]), not colour.
-	plain := r.NewStyle()
-	return styles{faint: plain, turn: plain}
+	gray := r.NewStyle().Foreground(lipgloss.Color("8")) // bright-black, tracks theme
+	return styles{
+		primary:   r.NewStyle(),
+		secondary: gray,
+		tertiary:  gray.Faint(true), // degrades to secondary where Faint is ignored
+		suitRed:   r.NewStyle().Foreground(lipgloss.Color("1")),
+		back:      r.NewStyle().Foreground(lipgloss.Color("4")), // blue
+	}
 }

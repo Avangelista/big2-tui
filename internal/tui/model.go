@@ -3,7 +3,9 @@
 package tui
 
 import (
+	"os"
 	"sort"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,8 +30,9 @@ type Model struct {
 	joinHint string // "ssh -p PORT IP" shown in the waiting room
 	prog     *tea.Program
 
-	r  *lipgloss.Renderer
-	st styles
+	r          *lipgloss.Renderer
+	st         styles
+	asciiSuits bool // draw suit letters (D/C/H/S) instead of pips - see resolveASCIISuits
 
 	w, h int
 	snap *protocol.StateSnapshot
@@ -64,9 +67,71 @@ func New(r commander, id, joinHint string, renderer *lipgloss.Renderer) *Model {
 		joinHint:        joinHint,
 		r:               renderer,
 		st:              newStyles(renderer),
+		asciiSuits:      resolveASCIISuits(),
 		selected:        map[int]bool{},
 		pendingBotLevel: 5,
 	}
+}
+
+// resolveASCIISuits decides whether cards show suit letters (D/C/H/S) instead of
+// pips (♦♣♥♠). Pips are the default ("go all in on glyphs"), but they measure as
+// width-1 only on terminals that honour text presentation; DEUCE_SUITS lets an
+// operator pin the mode, and a CJK/ambiguous-width locale auto-falls back to letters
+// (there the pips render double-width and would shear the fixed grid).
+//
+//	DEUCE_SUITS=glyph  always pips        =ascii  always letters
+//	DEUCE_SUITS=auto   pips, letters under a CJK locale   (unset: same as auto)
+func resolveASCIISuits() bool {
+	switch strings.ToLower(os.Getenv("DEUCE_SUITS")) {
+	case "ascii":
+		return true
+	case "glyph":
+		return false
+	default: // "auto" or unset
+		return cjkLocale()
+	}
+}
+
+// cjkLocale reports whether the process locale is one where ambiguous-width glyphs
+// (the suit pips among them) are drawn double-width.
+func cjkLocale() bool {
+	for _, k := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		l := strings.ToLower(os.Getenv(k))
+		if strings.Contains(l, "zh") || strings.Contains(l, "ja") || strings.Contains(l, "ko") {
+			return true
+		}
+	}
+	return false
+}
+
+// suitRune is the display rune for a suit: a pip, or its ASCII letter in ascii mode.
+func (m *Model) suitRune(s game.Suit) rune {
+	if m.asciiSuits {
+		return rune(s.String()[0])
+	}
+	return s.Glyph()
+}
+
+// suitInfo classifies a composited rune: whether it is a suit cell (pip or letter)
+// and, if so, whether it is a red suit. Rank and box-drawing runes never collide
+// with suit runes, so pile colouring is a pure function of the rune.
+func (m *Model) suitInfo(r rune) (red, isSuit bool) {
+	if m.asciiSuits {
+		switch r {
+		case 'D', 'H':
+			return true, true
+		case 'C', 'S':
+			return false, true
+		}
+		return false, false
+	}
+	switch r {
+	case '♦', '♥':
+		return true, true
+	case '♣', '♠':
+		return false, true
+	}
+	return false, false
 }
 
 // SetProgram records the program so the room can push updates.
@@ -527,7 +592,7 @@ func (m *Model) viewContent() string {
 		return m.renderKicked()
 	}
 	if m.snap == nil {
-		return m.center("connecting...")
+		return m.center(m.st.secondary.Render("connecting..."))
 	}
 	switch m.snap.Phase {
 	case protocol.Waiting:
