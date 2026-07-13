@@ -175,7 +175,7 @@ func (r *Room) handleJoin(c JoinCmd) {
 	}
 	// First to join is host (covers serve-only mode with no local host seat).
 	isHost := c.Host || len(r.seats) == 0
-	seat := &Seat{ID: c.ID, Prog: c.Prog, Connected: true, Host: isHost, Letter: r.freeLetter()}
+	seat := &Seat{ID: c.ID, Prog: c.Prog, Connected: true, Host: isHost, Letter: r.randomFreeLetter()}
 	r.seats = append(r.seats, seat)
 	r.fanout()
 }
@@ -502,17 +502,8 @@ func (r *Room) handleRemoveBot(c RemoveBotCmd) {
 	}
 }
 
-// freeLetter is the lowest A-Z letter no seat holds (human default).
-func (r *Room) freeLetter() byte {
-	for L := byte('A'); L <= 'Z'; L++ {
-		if !r.letterTaken(L) {
-			return L
-		}
-	}
-	return 'A' // unreachable: at most maxSeats <= 26 seats
-}
-
-// randomFreeLetter is a random A-Z letter no seat holds (bots get these).
+// randomFreeLetter is a random A-Z letter no seat holds; new joiners and bots both
+// get one so nobody's default is predictable.
 func (r *Room) randomFreeLetter() byte {
 	var free []byte
 	for L := byte('A'); L <= 'Z'; L++ {
