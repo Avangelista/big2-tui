@@ -603,18 +603,18 @@ func (m *Model) renderWaiting() string {
 	// Status first, so the host always sees how to start (or why they can't yet).
 	switch {
 	case s.IsHost && len(s.Players) >= s.MinStart:
-		b.WriteString("enter    start\n")
+		b.WriteString("enter  start\n")
 	case s.IsHost:
 		b.WriteString(fmt.Sprintf("need %d+ to start\n", s.MinStart))
 	default:
 		b.WriteString("waiting for host...\n")
 	}
-	b.WriteString("\na-z      pick letter")
+	b.WriteString("\na-z    pick letter")
 	if s.IsHost {
-		b.WriteString(fmt.Sprintf("\n1-9      bot level (%d)", m.pendingBotLevel))
-		b.WriteString("\n+ / -    add / remove bot")
+		b.WriteString(fmt.Sprintf("\n1-9    bot level (%d)", m.pendingBotLevel))
+		b.WriteString("\n+/-    add/remove bot")
 	}
-	b.WriteString("\nesc      quit")
+	b.WriteString("\nesc    quit")
 	if m.joinHint != "" {
 		b.WriteString("\n\n" + m.joinHint)
 	}
