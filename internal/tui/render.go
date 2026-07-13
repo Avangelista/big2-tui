@@ -367,7 +367,7 @@ func pasteBox(grid [][]byte, box []string, x0, y0 int) {
 // window.
 func (m *Model) selfBand() string {
 	me := m.snap.Players[m.snap.YouSeat]
-	hand := m.snap.YourHand
+	hand := m.hand()
 	label := m.label(me)
 	// Emptied hand (you played your last card and won): no cards, just the label
 	// pinned at the bottom row so the band keeps its height.
@@ -676,11 +676,11 @@ func (m *Model) renderKicked() string {
 // gameFooter is the always-present in-game key legend, shortened on narrow
 // terminals so it never wraps past the board.
 func gameFooter(w int) string {
-	full := "arrows move  space pick  enter play  x pass  c clear  h hide  esc quit"
+	full := "arrows move  space pick  enter play  x pass  c clear  s sort  esc quit"
 	if lipgloss.Width(full) <= w {
 		return full
 	}
-	return "arrows  space  enter  x  c  h  esc"
+	return "arrows  space  enter  x  c  s  esc"
 }
 
 // ---- helpers ----

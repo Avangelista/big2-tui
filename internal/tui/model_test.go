@@ -216,6 +216,59 @@ func TestStaleSnapshotIgnored(t *testing.T) {
 	}
 }
 
+// TestHandSortToggle: `s` flips the hand between rank order and suit order, keeping
+// the same cards selected and the cursor on the same card.
+func TestHandSortToggle(t *testing.T) {
+	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	raw := parseHand(t, "3D 5C 7H TD 5D 2S")
+	m.Update(protocol.StateSnapshotMsg{Snap: inGameSnap(1, raw)})
+
+	byRank, bySuit := sortHand(raw, false), sortHand(raw, true)
+	if !sameHand(m.hand(), byRank) {
+		t.Fatalf("default hand should be rank-sorted, got %v", m.hand())
+	}
+	if sameHand(byRank, bySuit) {
+		t.Fatal("test hand needs rank and suit orders to differ")
+	}
+
+	// Select two cards and put the cursor on a third (display indices).
+	m.selected[0], m.selected[2] = true, true
+	m.cursor = 4
+	wantSel := map[game.Card]bool{byRank[0]: true, byRank[2]: true}
+	wantCursor := byRank[4]
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if !m.sortBySuit || !sameHand(m.hand(), bySuit) {
+		t.Fatalf("s should switch to suit order, got %v", m.hand())
+	}
+	dh := m.hand()
+	gotSel := map[game.Card]bool{}
+	for i := range dh {
+		if m.selected[i] {
+			gotSel[dh[i]] = true
+		}
+	}
+	if len(gotSel) != len(wantSel) {
+		t.Fatalf("selection size changed across sort: got %d want %d", len(gotSel), len(wantSel))
+	}
+	for c := range wantSel {
+		if !gotSel[c] {
+			t.Errorf("selected card %v lost across the sort toggle", c)
+		}
+	}
+	if dh[m.cursor] != wantCursor {
+		t.Errorf("cursor moved off its card: on %v, want %v", dh[m.cursor], wantCursor)
+	}
+
+	// Toggle back to rank order.
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if m.sortBySuit || !sameHand(m.hand(), byRank) {
+		t.Fatal("s should toggle back to rank order")
+	}
+}
+
 // TestWindowIndices pins the cursor-centred hand-window math: centre, clamp at both
 // ends, and the moreLeft/moreRight scroll flags.
 func TestWindowIndices(t *testing.T) {

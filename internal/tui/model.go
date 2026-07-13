@@ -3,6 +3,7 @@
 package tui
 
 import (
+	"sort"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -33,14 +34,15 @@ type Model struct {
 	w, h int
 	snap *protocol.StateSnapshot
 
-	cursor   int
-	scroll   int // off-turn view offset (leftmost visible card); no cursor is shown
-	selected map[int]bool
-	hint     string
-	hintGen  int  // bumped on each hint so a stale timer can't clear a newer hint
-	lastRev  int  // highest snapshot revision applied; drops out-of-order deliveries
-	boss     bool // hide the card UI (blank the borders so the board reads as plain text)
-	kicked   string
+	cursor     int
+	scroll     int // off-turn view offset (leftmost visible card); no cursor is shown
+	selected   map[int]bool
+	sortBySuit bool // sort the hand by suit instead of by rank
+	hint       string
+	hintGen    int  // bumped on each hint so a stale timer can't clear a newer hint
+	lastRev    int  // highest snapshot revision applied; drops out-of-order deliveries
+	boss       bool // hide the card UI (blank the borders so the board reads as plain text)
+	kicked     string
 
 	pendingBotLevel int // difficulty applied to the next added bot (1-9)
 
@@ -345,7 +347,7 @@ func isLetter(b byte) bool {
 }
 
 func (m *Model) keyGame(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	hand := m.snap.YourHand
+	hand := m.hand()
 	myTurn := m.isMyTurn()
 	switch k.String() {
 	case "left":
@@ -397,8 +399,10 @@ func (m *Model) keyGame(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.selected = map[int]bool{} // passing discards any pending selection
 		m.room.Submit(room.PassCmd{ID: m.id})
+	case "s", "S":
+		m.toggleSort() // reorder the hand by rank or by suit
 	case "h":
-		m.boss = !m.boss // hide the card UI (in-game only)
+		m.boss = !m.boss // secret: hide the card UI (undocumented)
 	}
 	return m, nil
 }
@@ -428,7 +432,7 @@ func (m *Model) keyOver(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) selectedCards() []game.Card {
-	hand := m.snap.YourHand
+	hand := m.hand()
 	out := make([]game.Card, 0, len(m.selected))
 	for i := 0; i < len(hand); i++ {
 		if m.selected[i] {
@@ -436,6 +440,58 @@ func (m *Model) selectedCards() []game.Card {
 		}
 	}
 	return out
+}
+
+// hand returns the viewer's hand in the current display order: by rank (the server
+// order) or, when toggled, grouped by suit. Cursor and selection index into this.
+func (m *Model) hand() []game.Card {
+	if m.snap == nil {
+		return nil
+	}
+	return sortHand(m.snap.YourHand, m.sortBySuit)
+}
+
+// sortHand returns a copy of hand ordered by rank (bySuit false) or by suit then
+// rank (bySuit true).
+func sortHand(hand []game.Card, bySuit bool) []game.Card {
+	out := append([]game.Card(nil), hand...)
+	sort.Slice(out, func(i, j int) bool {
+		if bySuit {
+			if out[i].Suit != out[j].Suit {
+				return out[i].Suit < out[j].Suit
+			}
+			return out[i].Rank < out[j].Rank
+		}
+		return out[i].Order() < out[j].Order()
+	})
+	return out
+}
+
+// toggleSort flips the hand's sort order, keeping the same cards selected and the
+// cursor on the same card as they move to their new positions.
+func (m *Model) toggleSort() {
+	old := m.hand()
+	var cursorCard game.Card
+	hasCursor := m.cursor >= 0 && m.cursor < len(old)
+	if hasCursor {
+		cursorCard = old[m.cursor]
+	}
+	selected := map[game.Card]bool{}
+	for i, c := range old {
+		if m.selected[i] {
+			selected[c] = true
+		}
+	}
+	m.sortBySuit = !m.sortBySuit
+	m.selected = map[int]bool{}
+	for i, c := range m.hand() {
+		if selected[c] {
+			m.selected[i] = true
+		}
+		if hasCursor && c == cursorCard {
+			m.cursor = i
+		}
+	}
 }
 
 // View renders the current screen, applying the boss-key disguise last.
