@@ -290,3 +290,62 @@ func TestTwoPlayerGame(t *testing.T) {
 		t.Fatalf("2-player game did not finish")
 	}
 }
+
+// TestNextHandDropsDisconnected: a player who left is removed on the next hand, as long
+// as enough remain to deal.
+func TestNextHandDropsDisconnected(t *testing.T) {
+	r := New(4, 3, mrand.New(mrand.NewSource(11)))
+	ids := joinStart(r, 4)
+	playOutHand(t, r, ids)
+	if r.Query(ids[0]).Phase != protocol.Finished {
+		t.Fatal("hand did not finish")
+	}
+	r.Submit(DisconnectCmd{ID: ids[3]}) // a non-host leaves on the end screen
+	r.Submit(NextHandCmd{ID: ids[0]})
+	next := r.Query(ids[0])
+	if next.Phase != protocol.InGame {
+		t.Fatalf("next hand phase = %v, want InGame", next.Phase)
+	}
+	if len(next.Players) != 3 {
+		t.Fatalf("dropped-seat roster = %d players, want 3", len(next.Players))
+	}
+	total := 0
+	for _, p := range next.Players {
+		if !p.Connected {
+			t.Errorf("seat %d still present but disconnected", p.Seat)
+		}
+		total += p.CardCount
+	}
+	if total != 52 { // a full 3-player deal (17/17/18)
+		t.Errorf("dealt %d cards across the roster, want 52", total)
+	}
+}
+
+// TestNextHandBlockedWhenTooFew: once too few players remain the host can't deal; the
+// roster is left intact (host can only quit).
+func TestNextHandBlockedWhenTooFew(t *testing.T) {
+	r := New(4, 3, mrand.New(mrand.NewSource(12)))
+	ids := joinStart(r, 4)
+	playOutHand(t, r, ids)
+	r.Submit(DisconnectCmd{ID: ids[2]})
+	r.Submit(DisconnectCmd{ID: ids[3]}) // only 2 remain, below minStart 3
+	r.Submit(NextHandCmd{ID: ids[0]})
+	after := r.Query(ids[0])
+	if after.Phase != protocol.Finished {
+		t.Fatalf("phase = %v, want Finished (too few to continue)", after.Phase)
+	}
+	if len(after.Players) != 4 {
+		t.Errorf("roster changed while blocked: %d players, want 4", len(after.Players))
+	}
+}
+
+// TestHostPromotedOnDisconnect: when the host leaves mid-game, host passes to the next
+// connected player so the room can still advance or quit.
+func TestHostPromotedOnDisconnect(t *testing.T) {
+	r := New(4, 3, mrand.New(mrand.NewSource(13)))
+	ids := joinStart(r, 4)
+	r.Submit(DisconnectCmd{ID: ids[0]}) // the host leaves
+	if !r.Query(ids[1]).IsHost {
+		t.Error("host should pass to the next connected player when the host leaves")
+	}
+}

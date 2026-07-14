@@ -296,8 +296,39 @@ func (r *Room) handleNextHand(c NextHandCmd) {
 	if s == nil || !s.Host || r.phase != protocol.Finished {
 		return
 	}
+	// Not enough players left to deal another hand: the host can only quit.
+	if r.connectedCount() < r.minStart {
+		return
+	}
+	// Drop everyone who left so the next hand starts clean, rather than carrying them as
+	// permanent gone-markers.
+	r.dropDisconnected()
 	r.startGame()
 	r.afterTransition()
+}
+
+// connectedCount is how many seats are still in the game (humans and bots).
+func (r *Room) connectedCount() int {
+	n := 0
+	for _, s := range r.seats {
+		if s.Connected {
+			n++
+		}
+	}
+	return n
+}
+
+// dropDisconnected removes every seat whose player has left, then makes sure a
+// connected human still holds the host. Call only when enough seats remain to play.
+func (r *Room) dropDisconnected() {
+	kept := r.seats[:0]
+	for _, s := range r.seats {
+		if s.Connected {
+			kept = append(kept, s)
+		}
+	}
+	r.seats = kept
+	r.promoteHost()
 }
 
 func (r *Room) handleLeave(id string) {
@@ -315,6 +346,10 @@ func (r *Room) handleLeave(id string) {
 		return
 	}
 	seat.Connected = false
+	if seat.Host { // the host left mid-game/end: hand off so someone can still advance or quit
+		seat.Host = false
+		r.promoteHost()
+	}
 	r.afterTransition()
 }
 

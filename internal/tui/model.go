@@ -578,11 +578,26 @@ func (m *Model) setHint(text string) tea.Cmd {
 func (m *Model) keyOver(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "enter":
-		if m.snap.IsHost {
+		if m.snap.IsHost && m.enoughToContinue() {
 			m.room.Submit(room.NextHandCmd{ID: m.id})
 		}
 	}
 	return m, nil
+}
+
+// enoughToContinue reports whether enough players are still connected (humans or bots)
+// to deal another hand; below that the host can only quit.
+func (m *Model) enoughToContinue() bool {
+	if m.snap == nil {
+		return false
+	}
+	alive := 0
+	for _, p := range m.snap.Players {
+		if p.Connected {
+			alive++
+		}
+	}
+	return alive >= m.snap.MinStart
 }
 
 func (m *Model) selectedCards() []game.Card {
@@ -734,9 +749,6 @@ func (m *Model) View() string {
 func (m *Model) viewContent() string {
 	if m.w == 0 || m.h == 0 {
 		return ""
-	}
-	if m.w < minW || m.h < minH {
-		return m.tooSmall()
 	}
 	if m.kicked != "" {
 		return m.renderKicked()

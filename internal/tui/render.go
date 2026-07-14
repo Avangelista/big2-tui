@@ -11,12 +11,8 @@ import (
 	"github.com/Avangelista/deuception/internal/protocol"
 )
 
-const (
-	minW = 34
-	minH = 14 // top band 2 + side fans >=5 + bottom (error 1 + hand 4 + footer 1)
-
-	vs15 = "︎" // variation selector-15: request text (not emoji) glyph, width-1
-)
+// vs15 requests a text (not emoji) glyph, width-1.
+const vs15 = "︎"
 
 // ---- player letters & labels ----
 
@@ -148,13 +144,6 @@ func botTag(p protocol.PlayerView) string {
 
 // ---- game table (anchored to the screen edges: C top, B left, D right, A
 // bottom, pile centre) ----
-
-// tooSmall is the shared "enlarge your terminal" screen, shown once the window
-// drops below the minimum.
-func (m *Model) tooSmall() string {
-	return m.center(fmt.Sprintf("enlarge terminal to %dx%d", minW, minH) +
-		"\n" + m.st.secondary.Render(fmt.Sprintf("(now %dx%d)", m.w, m.h)))
-}
 
 func (m *Model) renderGame() string {
 	n := len(m.snap.Players)
@@ -983,6 +972,9 @@ func (m *Model) renderOver() string {
 		case youHostTag(p) != "":
 			tag = " " + youHostTag(p)
 		}
+		if !p.Connected {
+			tag += " (disconnected)" // left mid-game or on this screen; dropped next hand
+		}
 		row := m.st.primary.Render(fmt.Sprintf("%c %4d", m.letterFor(p.Seat), p.Score))
 		if tag != "" {
 			row += m.st.secondary.Render(tag)
@@ -990,9 +982,12 @@ func (m *Model) renderOver() string {
 		b.WriteString(row + "\n")
 	}
 	b.WriteString("\n")
-	if s.IsHost {
+	switch {
+	case s.IsHost && m.enoughToContinue():
 		b.WriteString(m.st.primary.Render("enter  next hand"))
-	} else {
+	case s.IsHost:
+		b.WriteString(m.st.secondary.Render("not enough players to continue"))
+	default:
 		b.WriteString(m.st.secondary.Render("waiting for host..."))
 	}
 	// Blank line before the esc legend, matching the lobby's status/legend spacing.
@@ -1021,14 +1016,17 @@ func rankByScore(players []protocol.PlayerView) []protocol.PlayerView {
 // ---- kicked ----
 
 func (m *Model) renderKicked() string {
-	return m.centerBlock(m.kicked + "\n\n" + m.st.tertiary.Render("press any key to disconnect"))
+	content := m.kicked + "\n\n" + m.st.secondary.Render("press any key to disconnect")
+	// Centre each line (not just the block), so the two lines are centred to each other.
+	block := m.r.NewStyle().Width(lipgloss.Width(content)).Align(lipgloss.Center).Render(content)
+	return lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, block)
 }
 
 // gameFooter is the always-present in-game key legend, shortened on narrow
 // terminals so it never wraps past the board.
 func (m *Model) gameFooter(w int) string {
 	if m.confirmQuit {
-		return "quit game?  enter yes  esc no"
+		return "quit?  enter yes  esc no"
 	}
 	if m.reacting {
 		return emotePicker(w)

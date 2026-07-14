@@ -262,7 +262,7 @@ func TestQuitConfirmFlow(t *testing.T) {
 	if _, ok := cc.last().(room.QuitCmd); ok {
 		t.Fatal("the first esc should not quit")
 	}
-	if !strings.Contains(m.gameFooter(80), "quit game?") {
+	if !strings.Contains(m.gameFooter(80), "quit?") {
 		t.Fatal("the footer should ask to confirm")
 	}
 	m.Update(tea.KeyMsg{Type: tea.KeyEsc}) // cancel
@@ -1002,5 +1002,53 @@ func TestOffTurnScrollClamps(t *testing.T) {
 	m.Update(tea.WindowSizeMsg{Width: 200, Height: 24})
 	if m.scroll != 0 {
 		t.Fatalf("scroll should re-clamp to 0 when the hand fits, got %d", m.scroll)
+	}
+}
+
+// TestEndScreenDisconnected: the scoreboard tags players who left, and the host is only
+// offered a next hand while enough players remain.
+func TestEndScreenDisconnected(t *testing.T) {
+	over := func(conn []bool, minStart int) string {
+		players := make([]protocol.PlayerView, len(conn))
+		for i := range players {
+			players[i] = protocol.PlayerView{Seat: i, Letter: byte('A' + i), Connected: conn[i]}
+		}
+		players[0].IsYou, players[0].IsHost = true, true
+		m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+		m.Update(tea.WindowSizeMsg{Width: 50, Height: 16})
+		m.Update(protocol.StateSnapshotMsg{Snap: protocol.StateSnapshot{
+			Phase: protocol.Finished, Rev: 1, YouSeat: 0, IsHost: true, MinStart: minStart,
+			Players: players, Winner: 0, Turn: -1}})
+		return stripStyling(m.renderOver())
+	}
+	// One left, three remain (>= minStart 3): tagged, host can deal.
+	got := over([]bool{true, true, true, false}, 3)
+	if !strings.Contains(got, "(disconnected)") {
+		t.Error("a disconnected player should be tagged on the scoreboard")
+	}
+	if !strings.Contains(got, "next hand") {
+		t.Error("host with enough players should be offered the next hand")
+	}
+	// Two left, two remain (< minStart 3): host can only quit.
+	got = over([]bool{true, true, false, false}, 3)
+	if strings.Contains(got, "next hand") {
+		t.Error("host should not be offered a next hand when too few remain")
+	}
+	if !strings.Contains(got, "not enough players") {
+		t.Error("host should be told there aren't enough players")
+	}
+}
+
+// TestNoMinSizeWindow: a small terminal renders the game, not an "enlarge terminal" screen.
+func TestNoMinSizeWindow(t *testing.T) {
+	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 20, Height: 8})
+	m.Update(protocol.StateSnapshotMsg{Snap: inGameSnap(1, parseHand(t, "3D 5C 9H"))})
+	out := stripStyling(m.View())
+	if strings.Contains(out, "enlarge") {
+		t.Error("min-size window should be gone; small terminals should render the game")
+	}
+	if !strings.ContainsAny(out, "♦♣♥♠") {
+		t.Errorf("small terminal should still render cards, got:\n%s", out)
 	}
 }
