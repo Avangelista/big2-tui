@@ -162,6 +162,113 @@ func TestLabelStacksCountOverInitial(t *testing.T) {
 	})
 }
 
+// TestReactDigitSends: a number key sends the matching quick-chat reaction, picker open
+// or not, on or off turn; a digit past the preset range does nothing.
+func TestReactDigitSends(t *testing.T) {
+	cc := &captureCommander{}
+	m := New(cc, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.Update(protocol.StateSnapshotMsg{Snap: inGameSnap(1, parseHand(t, "3D 5C 9H"))})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // "hurry" (code 2)
+	if ec, ok := cc.last().(room.EmoteCmd); !ok || ec.Code != 2 {
+		t.Fatalf("digit 3 should send EmoteCmd code 2, got %#v", cc.last())
+	}
+	cc.cmds = nil
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}}) // no 9th preset
+	if cc.last() != nil {
+		t.Fatalf("a digit past the presets should not send, got %#v", cc.last())
+	}
+}
+
+// TestReactPickerToggle: r opens/closes the picker, which swaps the footer for the preset
+// legend; the digits work regardless.
+func TestReactPickerToggle(t *testing.T) {
+	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.Update(protocol.StateSnapshotMsg{Snap: inGameSnap(1, parseHand(t, "3D 5C 9H"))})
+	if strings.Contains(m.gameFooter(80), "lol") {
+		t.Fatal("closed footer should show controls, not presets")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if !m.reacting || !strings.Contains(m.gameFooter(80), "lol") {
+		t.Fatal("r should open the picker and list presets")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if m.reacting {
+		t.Fatal("r again should close the picker")
+	}
+}
+
+// TestQuitConfirmFlow: esc in-game asks first (no quit); esc cancels, enter confirms.
+func TestQuitConfirmFlow(t *testing.T) {
+	cc := &captureCommander{}
+	m := New(cc, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.Update(protocol.StateSnapshotMsg{Snap: inGameSnap(1, parseHand(t, "3D 5C 9H"))})
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if !m.confirmQuit {
+		t.Fatal("esc in-game should raise the quit confirm")
+	}
+	if _, ok := cc.last().(room.QuitCmd); ok {
+		t.Fatal("the first esc should not quit")
+	}
+	if !strings.Contains(m.gameFooter(80), "quit game?") {
+		t.Fatal("the footer should ask to confirm")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc}) // cancel
+	if m.confirmQuit {
+		t.Fatal("a second esc should cancel the confirm")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})            // raise again
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // confirm
+	if _, ok := cc.last().(room.QuitCmd); !ok {
+		t.Fatalf("enter should quit, got %#v", cc.last())
+	}
+	if cmd == nil {
+		t.Fatal("confirming should return a quit command")
+	}
+}
+
+// TestReactionsOnInitialLine: a reaction flashes on a seat's initial line (not the count
+// line), inward of the initial for the side opponents.
+func TestReactionsOnInitialLine(t *testing.T) {
+	players := []protocol.PlayerView{
+		{Seat: 0, Letter: 'R', IsYou: true, IsTurn: true, CardCount: 9, Connected: true},
+		{Seat: 1, Letter: 'A', CardCount: 5, Connected: true},
+		{Seat: 2, Letter: 'B', CardCount: 8, Connected: true},
+		{Seat: 3, Letter: 'C', CardCount: 4, Connected: true},
+	}
+	snap := protocol.StateSnapshot{Phase: protocol.InGame, Rev: 1, YouSeat: 0,
+		Players: players, YourHand: parseHand(t, "3D 4C 5C 6C 7S 8D 9H TC 2S"),
+		Turn: 0, TableBy: -1, Winner: -1}
+	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 72, Height: 22})
+	m.Update(protocol.StateSnapshotMsg{Snap: snap})
+	m.emotes = map[int]emoteState{0: {0, 1}, 1: {1, 1}, 2: {2, 1}, 3: {3, 1}} // lol why hurry bro
+
+	frame := stripStyling(m.renderGame())
+	for _, e := range []string{"lol", "why", "hurry", "bro"} {
+		if !strings.Contains(frame, e) {
+			t.Errorf("reaction %q missing from frame", e)
+		}
+	}
+	// Left opponent: reaction on the initial row (last), not the count row above it.
+	lrows := strings.Split(m.sideBlock(players[1], 8, true), "\n")
+	initRow, countRow := stripStyling(lrows[len(lrows)-1]), stripStyling(lrows[len(lrows)-2])
+	if !strings.Contains(initRow, "A") || !strings.Contains(initRow, "why") {
+		t.Errorf("left reaction should share the initial row, got %q", initRow)
+	}
+	if strings.Contains(countRow, "why") {
+		t.Errorf("reaction should not be on the count row, got %q", countRow)
+	}
+	// Right opponent: reaction sits inward (left) of the initial.
+	rrows := strings.Split(m.sideBlock(players[3], 8, false), "\n")
+	rrow := stripStyling(rrows[len(rrows)-1])
+	if strings.Index(rrow, "bro") > strings.Index(rrow, "C") {
+		t.Errorf("right reaction should sit left of the initial, got %q", rrow)
+	}
+}
+
 // TestTopPointerAlignsWithMarker: the top opponent's on-turn ▴ pointer and its
 // off-turn ✗ marker must land in the same column at any width (they use different
 // centring primitives, so even widths used to be off by one).

@@ -61,6 +61,12 @@ type DisconnectCmd struct{ ID string }
 // QuitCmd is a graceful leave (player pressed quit).
 type QuitCmd struct{ ID string }
 
+// EmoteCmd is a quick-chat reaction: Code indexes protocol.Emotes.
+type EmoteCmd struct {
+	ID   string
+	Code int
+}
+
 func (JoinCmd) isCmd()       {}
 func (StartCmd) isCmd()      {}
 func (PlayCmd) isCmd()       {}
@@ -72,3 +78,4 @@ func (SetLetterCmd) isCmd()  {}
 func (AddBotCmd) isCmd()     {}
 func (RemoveBotCmd) isCmd()  {}
 func (BotActCmd) isCmd()     {}
+func (EmoteCmd) isCmd()      {}

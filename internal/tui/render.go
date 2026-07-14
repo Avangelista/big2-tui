@@ -54,6 +54,29 @@ func (m *Model) labelW(p protocol.PlayerView) int {
 	return len(fmt.Sprintf("%d", p.CardCount))
 }
 
+// emoteW is the reserved column width for a reaction beside a label - the longest preset.
+const emoteW = 5
+
+// emoteFor returns the active quick-chat phrase for an absolute seat, or "" when none is
+// showing.
+func (m *Model) emoteFor(seat int) string {
+	if e, ok := m.emotes[seat]; ok && e.code >= 0 && e.code < len(protocol.Emotes) {
+		return protocol.Emotes[e.code]
+	}
+	return ""
+}
+
+// emoteZone returns a seat's reaction as a fixed emoteW-wide primary cell (blank when
+// none), so reserving it beside a centred label (self, top) never shifts the layout.
+// Reactions read primary even off turn - a reaction should pop whoever's turn it is.
+func (m *Model) emoteZone(seat int) string {
+	e := m.emoteFor(seat)
+	if len(e) > emoteW {
+		e = e[:emoteW]
+	}
+	return m.st.primary.Render(e + strings.Repeat(" ", emoteW-len(e)))
+}
+
 // labelBlock stacks the count over the initial, aligned to a (Left for the self hand
 // and the left opponent, Right for the right opponent).
 func (m *Model) labelBlock(p protocol.PlayerView, a lipgloss.Position) string {
@@ -140,9 +163,11 @@ func (m *Model) renderGame() string {
 	// Bottom edge: an always-visible error line above the hand, centred over the
 	// table.
 	self := lipgloss.PlaceHorizontal(w, lipgloss.Center, m.selfBand())
-	footerText := gameFooter(w)
-	if m.boss {
-		footerText = "" // the controls legend would give the game away; blank the row
+	footerText := m.gameFooter(w)
+	if m.boss && !m.confirmQuit {
+		// Hide the controls legend and the react picker in boss mode, but keep the quit
+		// confirmation so you can still exit; its plain text doesn't give the game away.
+		footerText = ""
 	}
 	footer := lipgloss.PlaceHorizontal(w, lipgloss.Center, m.st.tertiary.Render(footerText))
 	bottom := lipgloss.JoinVertical(lipgloss.Left,
@@ -196,20 +221,24 @@ func (m *Model) topBand(n, w int) string {
 	active := m.showTurn(p)
 	fill, floor := hFan(p.CardCount, w, active)
 	count, letter := m.labelParts(p)
-	if active {
-		// Count beside the ░ body, initial beside the floor; the ▴ turn pointer sits in
-		// the pile gap just below (see pileFloat).
-		return lipgloss.JoinVertical(lipgloss.Left,
-			m.paintBack(fill, true)+" "+count, m.paintBack(floor, true)+" "+letter)
-	}
-	// Off turn: the count rides the floor (top row); the initial and the centred status
-	// marker share the bottom row. Centre the marker over the whole band width (bandInnerW,
-	// matching the pointer's bandW) so it lands at screen centre, aligned with the on-turn
-	// ▴ pointer in the pile gap; the initial sits at the right, clear of the centred mark.
 	floorW := lipgloss.Width(floor)
-	bandInnerW := floorW + 1 + m.labelW(p)
-	row0 := m.paintBack(floor, false) + " " + count
-	markCol := (bandInnerW - 1) / 2
+	handW := floorW + 1 + m.labelW(p) // floor + " " + count: what the ▴/✗ centre over
+	// The reaction rides the initial (bottom) row in a reserved zone to the right of the
+	// "hand", so it's outside the region the ▴/✗ centre over and the cue stays put.
+	react := " " + m.emoteZone(p.Seat)
+	padTo := func(s string, wd int) string { return s + strings.Repeat(" ", maxi(0, wd-lipgloss.Width(s))) }
+	if active {
+		// Count beside the ░ body; initial (+ reaction) beside the floor. The ▴ turn
+		// pointer sits in the pile gap just below (see pileFloat).
+		row0 := m.paintBack(fill, true) + " " + count
+		row1 := padTo(m.paintBack(floor, true)+" "+letter, handW) + react
+		return lipgloss.JoinVertical(lipgloss.Left, row0, row1)
+	}
+	// Off turn: the count rides the floor (top row); the initial, the centred status marker
+	// and the reaction share the bottom row. Centre the marker over the floor+count "hand"
+	// (handW, matching the pointer) so it lands at screen centre, aligned with the on-turn
+	// ▴ pointer in the pile gap; the initial sits at the right, clear of the centred mark.
+	markCol := (handW - 1) / 2
 	letterCol := floorW + 1
 	gap := letterCol - markCol - 1
 	if gap < 0 {
@@ -221,7 +250,8 @@ func (m *Model) topBand(n, w int) string {
 	if mk := m.oppMark(p, "▴"); mk != "" {
 		markGlyph = m.styleMark(mk)
 	}
-	row1 := strings.Repeat(" ", markCol) + markGlyph + strings.Repeat(" ", gap) + letter
+	row0 := m.paintBack(floor, false) + " " + count
+	row1 := padTo(strings.Repeat(" ", markCol)+markGlyph+strings.Repeat(" ", gap)+letter, handW) + react
 	return lipgloss.JoinVertical(lipgloss.Left, row0, row1)
 }
 
@@ -316,7 +346,17 @@ func (m *Model) sideBlock(p protocol.PlayerView, budget int, leftSide bool) stri
 		}
 	}
 	// The two-line indicator (count over initial) sits on its own rows below the fan.
+	// A reaction flashes inward of the initial - to the right for the left opponent, to the
+	// left for the right one - extending into blank space, so the anchored fan never moves.
 	count, letter := m.labelParts(p)
+	if e := m.emoteFor(p.Seat); e != "" {
+		r := m.st.primary.Render(e)
+		if leftSide {
+			letter = letter + " " + r
+		} else {
+			letter = r + " " + letter
+		}
+	}
 	return lipgloss.JoinVertical(align, append(fan, count, letter)...)
 }
 
@@ -431,13 +471,15 @@ func (m *Model) pileFloat(w, h int) string {
 		}
 		if ok && m.showTurn(top) {
 			// Land the ▴ in the exact column the off-turn ✗ marker uses, so the cue
-			// never jumps when the top player's status flips. That marker is centred
-			// over the top band (floor + " " + the count indicator, width labelW), which
-			// is then centred on screen with lipgloss (left pad floors gap/2); replicate
-			// that and convert the screen column to a grid index in the centre column.
+			// never jumps when the top player's status flips. The marker centres over the
+			// floor+count "hand" (handW), but the whole band also carries a reserved
+			// reaction zone on the right (totalW), and it's totalW that lipgloss centres on
+			// screen. So offset by handW within a band positioned by totalW, then convert
+			// the screen column to a grid index in the centre column.
 			_, floor := hFan(top.CardCount, m.w, false)
-			bandW := lipgloss.Width(floor) + 1 + m.labelW(top)
-			markerCol := (m.w-bandW)/2 + (bandW-1)/2
+			handW := lipgloss.Width(floor) + 1 + m.labelW(top)
+			totalW := handW + 1 + emoteW
+			markerCol := (m.w-totalW)/2 + (handW-1)/2
 			if gc := markerCol - (m.w-w)/2; gc >= 0 && gc < w {
 				grid[0][gc] = '▴'
 			}
@@ -559,14 +601,18 @@ func (m *Model) selfBand() string {
 	lw := maxi(lipgloss.Width(painted[2]), lipgloss.Width(painted[3]))
 	painted[2] += strings.Repeat(" ", lw-lipgloss.Width(painted[2])) + " " + count
 	painted[3] += strings.Repeat(" ", lw-lipgloss.Width(painted[3])) + " " + letter
+	// Your own reaction flashes to the right of the initial, in a reserved (blank-when-idle)
+	// zone so the centred hand never shifts when one pops.
+	painted[3] += " " + m.emoteZone(me.Seat)
 	return lipgloss.JoinVertical(lipgloss.Left, painted...)
 }
 
 // maxHandCells is how many hand cards fit across the screen, reserving the 2-col left
-// margin, box overhead, the trailing count indicator and the "›" more-cards flag beside it.
+// margin, box overhead, the trailing count indicator, the "›" more-cards flag, and the
+// reaction zone (emoteW + a gap) beside the initial, so a reaction never runs off-screen.
 func (m *Model) maxHandCells() int {
 	me := m.snap.Players[m.snap.YouSeat]
-	n := (m.w - 8 - m.labelW(me)) / 3
+	n := (m.w - 8 - m.labelW(me) - (emoteW + 1)) / 3
 	if n < 1 {
 		n = 1
 	}
@@ -974,12 +1020,32 @@ func (m *Model) renderKicked() string {
 
 // gameFooter is the always-present in-game key legend, shortened on narrow
 // terminals so it never wraps past the board.
-func gameFooter(w int) string {
-	full := "arrows move  space pick  enter play  x pass  c clear  s sort  esc quit"
+func (m *Model) gameFooter(w int) string {
+	if m.confirmQuit {
+		return "quit game?  enter yes  esc no"
+	}
+	if m.reacting {
+		return emotePicker(w)
+	}
+	full := "arrows move  space pick  enter play  x pass  s sort  r react  esc quit"
 	if lipgloss.Width(full) <= w {
 		return full
 	}
-	return "arrows  space  enter  x  c  s  esc"
+	return "arrows  space  enter  x  s  r  esc"
+}
+
+// emotePicker is the quick-chat legend that replaces the footer while the picker is
+// open: each preset on its number key. It mirrors the digits that always send.
+func emotePicker(w int) string {
+	parts := make([]string, len(protocol.Emotes))
+	for i, e := range protocol.Emotes {
+		parts[i] = fmt.Sprintf("%d %s", i+1, e)
+	}
+	full := strings.Join(parts, "  ") + "  esc back" // two spaces between options, like the legend
+	if lipgloss.Width(full) <= w {
+		return full
+	}
+	return strings.Join(parts, " ") + " esc" // tighter separators, but keep the number-word gap
 }
 
 // ---- helpers ----

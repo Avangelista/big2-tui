@@ -51,6 +51,11 @@ type Model struct {
 
 	pendingBotLevel int // difficulty applied to the next added bot (1-9)
 
+	reacting    bool               // the quick-chat picker is open (footer shows the presets)
+	confirmQuit bool               // esc in-game asks first; enter confirms, esc cancels
+	emotes      map[int]emoteState // active reaction per absolute seat, flashed beside its label
+	emoteGen    int                // bumped per reaction so a stale timer can't clear a newer one
+
 	pileCur    []game.Card    // the play currently shown in the pile
 	pilePrev   []game.Card    // the play it beat, drawn under the slide (same size within a trick)
 	pileDir    [2]int         // unit direction the current play slides in from
@@ -60,6 +65,16 @@ type Model struct {
 }
 
 type hintExpireMsg struct{ gen int }
+
+// emoteState is a reaction currently shown for a seat; gen lets its expiry timer skip a
+// reaction that a newer one already replaced.
+type emoteState struct{ code, gen int }
+
+// emoteExpireMsg clears a seat's reaction once its beat elapses.
+type emoteExpireMsg struct{ seat, gen int }
+
+// emoteHold is how long a reaction stays on screen before it fades.
+const emoteHold = 2 * time.Second
 
 // New builds a Model; renderer must be session-scoped (MakeRenderer for SSH).
 func New(r commander, id, joinHint string, renderer *lipgloss.Renderer) *Model {
@@ -71,6 +86,7 @@ func New(r commander, id, joinHint string, renderer *lipgloss.Renderer) *Model {
 		st:              newStyles(renderer),
 		asciiSuits:      resolveASCIISuits(),
 		selected:        map[int]bool{},
+		emotes:          map[int]emoteState{},
 		pendingBotLevel: 5,
 	}
 }
@@ -158,6 +174,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case hintExpireMsg:
 		if msg.gen == m.hintGen {
 			m.hint = ""
+		}
+	case protocol.EmoteMsg:
+		return m, m.showEmote(msg.Seat, msg.Code)
+	case emoteExpireMsg:
+		if e, ok := m.emotes[msg.seat]; ok && e.gen == msg.gen {
+			delete(m.emotes, msg.seat)
 		}
 	case protocol.KickedMsg:
 		m.kicked = msg.Reason
@@ -365,10 +387,33 @@ func (m *Model) clampScroll() {
 }
 
 func (m *Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch k.String() {
-	case "ctrl+c", "esc":
+	if k.String() == "ctrl+c" { // hard quit, no confirmation
 		m.room.Submit(room.QuitCmd{ID: m.id})
 		return m, tea.Quit
+	}
+	// Quit confirmation (raised by esc in-game): enter confirms, esc cancels, the rest
+	// is swallowed so the prompt stays put.
+	if m.confirmQuit {
+		switch k.String() {
+		case "enter":
+			m.room.Submit(room.QuitCmd{ID: m.id})
+			return m, tea.Quit
+		case "esc":
+			m.confirmQuit = false
+		}
+		return m, nil
+	}
+	if k.String() == "esc" {
+		switch {
+		case m.reacting: // esc first dismisses the quick-chat picker
+			m.reacting = false
+		case m.snap != nil && m.snap.Phase == protocol.InGame:
+			m.confirmQuit = true // ask before abandoning a game in progress
+		default:
+			m.room.Submit(room.QuitCmd{ID: m.id})
+			return m, tea.Quit
+		}
+		return m, nil
 	}
 	if m.kicked != "" {
 		return m, tea.Quit
@@ -416,10 +461,27 @@ func isLetter(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
+// reactKey sends a quick-chat reaction if k is a digit in the preset range (works on or
+// off turn, with or without the picker open) and reports whether it handled the key.
+func (m *Model) reactKey(k tea.KeyMsg) bool {
+	s := k.String()
+	if len(s) != 1 || s[0] < '1' || int(s[0]-'0') > len(protocol.Emotes) {
+		return false
+	}
+	m.room.Submit(room.EmoteCmd{ID: m.id, Code: int(s[0] - '1')})
+	m.reacting = false // a sent reaction dismisses the picker
+	return true
+}
+
 func (m *Model) keyGame(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.reactKey(k) { // 1-5 fire a reaction any time, picker open or not
+		return m, nil
+	}
 	hand := m.hand()
 	myTurn := m.isMyTurn()
 	switch k.String() {
+	case "r":
+		m.reacting = !m.reacting // toggle the quick-chat picker (a reminder; digits work regardless)
 	case "left":
 		// On turn move the cursor to the next playable card; off turn scroll the view.
 		if myTurn {
@@ -493,6 +555,15 @@ func (m *Model) isMyTurn() bool {
 // immediately, since the turn already moved off them).
 func (m *Model) midPlaySlide() bool {
 	return m.pileFinish == finishNone && len(m.pileCur) > 0 && m.pileStep < pileSteps
+}
+
+// showEmote flashes a seat's reaction, cleared after emoteHold unless a newer reaction
+// from the same seat replaces it first.
+func (m *Model) showEmote(seat, code int) tea.Cmd {
+	m.emoteGen++
+	gen := m.emoteGen
+	m.emotes[seat] = emoteState{code: code, gen: gen}
+	return tea.Tick(emoteHold, func(time.Time) tea.Msg { return emoteExpireMsg{seat: seat, gen: gen} })
 }
 
 // setHint shows a transient hint, cleared after a few seconds unless a newer one

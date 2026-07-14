@@ -26,6 +26,17 @@ const (
 // StateSnapshotMsg carries a fresh, per-viewer redacted view of the room.
 type StateSnapshotMsg struct{ Snap StateSnapshot }
 
+// Emotes are the fixed quick-chat phrases a player can send, indexed by the Code in an
+// EmoteMsg. Kept short (<=5 cols) so each sits beside a player's label.
+var Emotes = []string{"lol", "why", "hurry", "bro", "gg"}
+
+// EmoteMsg broadcasts a quick-chat reaction from Seat to every session; the client
+// flashes Emotes[Code] beside that seat for a beat. Public - never redacted.
+type EmoteMsg struct {
+	Seat int
+	Code int
+}
+
 // ErrorMsg is an inline hint shown to a single player (e.g. an illegal move).
 type ErrorMsg struct{ Text string }
 

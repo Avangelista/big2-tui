@@ -113,6 +113,8 @@ func (r *Room) run() {
 			r.handleLeave(cmd.ID)
 		case QuitCmd:
 			r.handleLeave(cmd.ID)
+		case EmoteCmd:
+			r.handleEmote(cmd)
 		case queryCmd:
 			if idx := r.seatIndexByID(cmd.id); idx >= 0 {
 				cmd.reply <- r.snapshotFor(idx)
@@ -557,6 +559,19 @@ func (r *Room) handleGameWon() {
 
 // fanout pushes a per-viewer redacted snapshot to every connected seat, bumping
 // rev so clients can drop out-of-order sends.
+// handleEmote broadcasts a quick-chat reaction to every session; a fresh reaction from
+// a player replaces their previous one. Reactions are public, so no redaction is involved.
+func (r *Room) handleEmote(c EmoteCmd) {
+	if r.phase != protocol.InGame {
+		return
+	}
+	idx := r.seatIndexByID(c.ID)
+	if idx < 0 || c.Code < 0 || c.Code >= len(protocol.Emotes) {
+		return
+	}
+	safeSendAll(r.seats, protocol.EmoteMsg{Seat: idx, Code: c.Code})
+}
+
 func (r *Room) fanout() {
 	r.rev++
 	for i, s := range r.seats {
