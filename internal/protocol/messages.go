@@ -52,6 +52,9 @@ type StateSnapshot struct {
 	Turn     int         // -1 outside of play
 	TableBy  int         // seat that played the current Table combo; -1 on a new trick
 	Winner   int         // -1 until the hand is won
+
+	Opening  bool      // your play must include OpenCard (the hand's first play)
+	OpenCard game.Card // the mandatory opening card, valid only when Opening
 }
 
 // PlayerView is the redacted, public view of one seat.

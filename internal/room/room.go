@@ -620,6 +620,12 @@ func (r *Room) snapshotFor(viewer int) protocol.StateSnapshot {
 				snap.TableBy = int(r.game.Leader) // Leader owns the current Table combo
 			}
 			snap.Turn = int(r.game.Turn)
+			// The opening play (must include OpenCard) is only your concern on your
+			// first-of-the-game lead.
+			if r.phase == protocol.InGame && r.game.FirstPlay() && int(r.game.Turn) == viewer {
+				snap.Opening = true
+				snap.OpenCard = r.game.OpenCard
+			}
 		}
 		snap.Winner = int(r.game.Winner)
 	}

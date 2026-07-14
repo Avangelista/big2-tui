@@ -327,8 +327,13 @@ func (m *Model) pileBoxLines(cs []game.Card) []string {
 func (m *Model) paintPileRow(row []rune) string {
 	tags := make([]uint8, len(row))
 	for i, r := range row {
-		// the active-turn pointer (▴▾◂▸) is primary, i.e. tagPlain/default, so it
-		// needs no special-casing here; only red faces are tagged.
+		// The active-turn pointer (▴▾◂▸) reads secondary so the whose-turn cue stays
+		// quiet; a red card's face goes red; black faces and borders stay primary.
+		switch r {
+		case '▴', '▾', '◂', '▸':
+			tags[i] = tagSecondary
+			continue
+		}
 		if isRed, isSuit := m.suitInfo(r); isSuit && isRed {
 			tags[i] = tagRed
 			if i > 0 && tags[i-1] == tagPlain { // the rank sits just left of its pip
@@ -559,11 +564,6 @@ func (m *Model) selfFan(hand []game.Card, start, end, cursor int, showCursor boo
 			tags[r][c] = tag
 		}
 	}
-	// Borders read primary on your turn (the active player), secondary otherwise.
-	borderTag := uint8(tagSecondary)
-	if showCursor {
-		borderTag = tagPlain
-	}
 	for j := 0; j < count; j++ {
 		i := start + j
 		L := 3 * j
@@ -572,15 +572,22 @@ func (m *Model) selfFan(hand []game.Card, start, end, cursor int, showCursor boo
 		if front {
 			faceW = 4 // the front "big" card
 		}
+		// A card reads "middle" (primary/bright) only when it's your turn AND the card
+		// can still complete a legal play given the selection; an unplayable card greys
+		// out (secondary) but keeps its place. A nil playable set (not yet computed)
+		// falls back to all-middle on turn. Borders read primary when middle, else gray.
+		mid := showCursor && (m.playable == nil || m.cardPlayable(i))
+		borderTag := uint8(tagSecondary)
+		if mid {
+			borderTag = tagPlain
+		}
 		t := 1
 		if m.selected[i] {
 			t = 0 // selected: lifted up one row
 		}
 		faceRow, bodyRow, botRow := t+1, t+2, t+3
-		// The border reads primary on your turn else secondary (borderTag); the
-		// cursor is primary. Selection is the lift - geometry, not colour.
-		// Roof ╭──, opened to ╭────╮ when this lifted card pops a row above a lower
-		// next card; left/bottom │…╰── (the bottom is on-grid only when lifted).
+		// The border reads primary when middle, else secondary (borderTag). Roof ╭──,
+		// opened to ╭────╮ when this lifted card pops a row above a lower next card.
 		open := false
 		if !front {
 			nextT := 1
@@ -612,24 +619,24 @@ func (m *Model) selfFan(hand []game.Card, start, end, cursor int, showCursor boo
 			put(bodyRow, rb, '│', borderTag)
 			put(botRow, rb, '╯', borderTag)
 		}
-		// Face rank+suit, coloured together. On your turn: red for hearts/diamonds,
-		// primary for spades/clubs. When the hand is inactive it recedes with the
-		// border - black faces to secondary gray, red faces to a muted dark red.
+		// Face rank+suit, coloured together. Middle (playable): red for hearts/
+		// diamonds, primary for spades/clubs. Low (inactive/unplayable): red faces to
+		// a muted dark red, black faces to the border's secondary gray.
 		face := hand[i]
 		var faceTag uint8
 		switch {
-		case face.Suit.IsRed() && showCursor:
+		case face.Suit.IsRed() && mid:
 			faceTag = tagRed
 		case face.Suit.IsRed():
 			faceTag = tagRedDim
-		case showCursor:
+		case mid:
 			faceTag = tagPlain
 		default:
 			faceTag = tagSecondary
 		}
 		put(faceRow, L+1, face.Rank.Rune(), faceTag)
 		put(faceRow, L+2, m.suitRune(face.Suit), faceTag)
-		if showCursor && i == cursor {
+		if mid && i == cursor { // the cursor only rests on a playable card
 			put(bodyRow, L+1, '∙', tagPlain) // picker: primary (boss-maps to *)
 		}
 	}
@@ -673,23 +680,11 @@ func (m *Model) paintTagged(runes []rune, tags []uint8) string {
 	return b.String()
 }
 
-// markTier returns the colour tag for a status marker: the active-turn pointer reads
-// primary (it is the whose-turn cue), the recessive passed ✗ / gone ⊘ read secondary.
-func markTier(mark string) uint8 {
-	switch mark {
-	case "✗", "⊘":
-		return tagSecondary
-	}
-	return tagPlain // pointers ▴▾◂▸ (and "") : primary
-}
-
-// styleMark colours a marker string by its tier (for the string call sites; the
-// rune-grid self marker uses markTier + paintTagged instead).
+// styleMark colours a status marker. Every cue - the active-turn pointer ▴▾◂▸ and the
+// recessive passed ✗ / gone ⊘ - reads secondary, so the whose-turn hint stays quiet
+// rather than shouting over the board.
 func (m *Model) styleMark(mark string) string {
-	if markTier(mark) == tagSecondary {
-		return m.st.secondary.Render(mark)
-	}
-	return m.st.primary.Render(mark)
+	return m.st.secondary.Render(mark)
 }
 
 // paintBack colours an opponent card-back row: the ░ pattern goes blue; the outline

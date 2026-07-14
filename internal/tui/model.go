@@ -40,7 +40,9 @@ type Model struct {
 	cursor     int
 	scroll     int // off-turn view offset (leftmost visible card); no cursor is shown
 	selected   map[int]bool
-	sortBySuit bool // sort the hand by suit instead of by rank
+	playable   []bool // on your turn, which hand cards can still complete a legal play
+	wasMyTurn  bool   // whether your turn was active last refresh; a false->true edge resets the cursor
+	sortBySuit bool   // sort the hand by suit instead of by rank
 	hint       string
 	hintGen    int  // bumped on each hint so a stale timer can't clear a newer hint
 	lastRev    int  // highest snapshot revision applied; drops out-of-order deliveries
@@ -199,6 +201,7 @@ func (m *Model) applySnapshot(s protocol.StateSnapshot) tea.Cmd {
 		m.cursor = max(0, len(s.YourHand)-1)
 	}
 	m.clampScroll()
+	m.recomputePlayable()
 	return cmd
 }
 
@@ -311,7 +314,8 @@ func (m *Model) advancePile(msg pileAnimMsg) tea.Cmd {
 	}
 	m.pileStep++
 	if m.pileStep >= pileSteps {
-		m.pilePrev = nil // fully covered now: only the current play remains
+		m.pilePrev = nil      // fully covered now: only the current play remains
+		m.recomputePlayable() // the slide landed; your turn (and its playable set) activates
 		if m.pileFinish != finishNone {
 			return m.pileHoldTick()
 		}
@@ -339,6 +343,7 @@ func (m *Model) finishPile(msg pileFinishMsg) tea.Cmd {
 // the headless preview and tests, which don't run the tick loop.
 func (m *Model) SettlePile() {
 	m.pileStep, m.pilePrev, m.pileFinish = pileSteps, nil, finishNone
+	m.recomputePlayable()
 }
 
 // clampScroll keeps the off-turn scroll within [0, len-maxHandCells] so a resize
@@ -416,19 +421,15 @@ func (m *Model) keyGame(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	myTurn := m.isMyTurn()
 	switch k.String() {
 	case "left":
-		// On turn move the cursor; off turn scroll the view (no cursor).
+		// On turn move the cursor to the next playable card; off turn scroll the view.
 		if myTurn {
-			if m.cursor > 0 {
-				m.cursor--
-			}
+			m.cursor = m.stepCursor(-1)
 		} else if m.scroll > 0 {
 			m.scroll--
 		}
 	case "right":
 		if myTurn {
-			if m.cursor < len(hand)-1 {
-				m.cursor++
-			}
+			m.cursor = m.stepCursor(1)
 		} else if m.scroll < len(hand)-m.maxHandCells() {
 			m.scroll++
 		}
@@ -440,21 +441,25 @@ func (m *Model) keyGame(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case m.selected[m.cursor]:
 			delete(m.selected, m.cursor)
 			m.hint = ""
+		case !m.cardPlayable(m.cursor):
+			return m, nil // greyed: unplayable, can't be selected
 		case len(m.selected) < 5:
 			m.selected[m.cursor] = true // combos are at most 5 cards
 			m.hint = ""
 		default:
 			return m, m.setHint("select up to 5 cards")
 		}
+		m.recomputePlayable() // the selection narrowed/widened what's playable
 	case "c":
 		m.selected = map[int]bool{}
 		m.hint = ""
+		m.recomputePlayable()
 	case "enter":
 		if !myTurn {
 			return m, nil
 		}
 		cards := m.selectedCards()
-		if len(cards) == 0 && m.cursor >= 0 && m.cursor < len(hand) {
+		if len(cards) == 0 && m.cardPlayable(m.cursor) {
 			cards = []game.Card{hand[m.cursor]} // quick-play the card under the cursor
 		}
 		if len(cards) == 0 {
@@ -520,6 +525,79 @@ func (m *Model) selectedCards() []game.Card {
 	return out
 }
 
+// computePlayable rebuilds which hand cards can still complete a legal play given the
+// current selection, indexed by display position. It does not move the cursor. Off turn
+// there is no set (every card reads low). Cheap enough to run on every state change.
+func (m *Model) computePlayable() {
+	if m.snap == nil || !m.isMyTurn() {
+		m.playable = nil
+		return
+	}
+	m.playable = game.PlayableSet(m.hand(), m.selectedCards(), m.snap.Table, m.snap.Opening, m.snap.OpenCard)
+}
+
+// recomputePlayable rebuilds the playable set and places the cursor. When your turn has
+// just begun (a false->true edge), the cursor resets to the lowest playable card;
+// otherwise it only snaps off a now-greyed card, keeping your place as the selection
+// narrows. Use this whenever the selection or turn changes; use computePlayable alone
+// when only the display order changed (a re-sort keeps the cursor on its own card).
+func (m *Model) recomputePlayable() {
+	myTurn := m.isMyTurn()
+	turnBegan := myTurn && !m.wasMyTurn
+	m.wasMyTurn = myTurn
+	m.computePlayable()
+	switch {
+	case turnBegan:
+		m.cursor = m.firstPlayable()
+	case !m.cardPlayable(m.cursor):
+		m.cursor = m.nearestPlayable(m.cursor)
+	}
+}
+
+// firstPlayable returns the lowest (leftmost) playable card index, or 0 when nothing is
+// playable (you can only pass).
+func (m *Model) firstPlayable() int {
+	for i := range m.playable {
+		if m.playable[i] {
+			return i
+		}
+	}
+	return 0
+}
+
+// cardPlayable reports whether hand card i is currently playable (on your turn).
+func (m *Model) cardPlayable(i int) bool {
+	return i >= 0 && i < len(m.playable) && m.playable[i]
+}
+
+// stepCursor returns the next playable card index from the cursor in direction dir
+// (+1 right, -1 left), skipping greyed cards; the cursor stays put if none is found.
+func (m *Model) stepCursor(dir int) int {
+	for i := m.cursor + dir; i >= 0 && i < len(m.playable); i += dir {
+		if m.playable[i] {
+			return i
+		}
+	}
+	return m.cursor
+}
+
+// nearestPlayable returns the playable index closest to from (searching outward), or
+// from unchanged when nothing is playable (you can only pass).
+func (m *Model) nearestPlayable(from int) int {
+	if m.cardPlayable(from) {
+		return from
+	}
+	for d := 1; d < len(m.playable); d++ {
+		if m.cardPlayable(from - d) {
+			return from - d
+		}
+		if m.cardPlayable(from + d) {
+			return from + d
+		}
+	}
+	return from
+}
+
 // hand returns the viewer's hand in the current display order: by rank (the server
 // order) or, when toggled, grouped by suit. Cursor and selection index into this.
 func (m *Model) hand() []game.Card {
@@ -570,6 +648,7 @@ func (m *Model) toggleSort() {
 			m.cursor = i
 		}
 	}
+	m.computePlayable() // display indices changed; the cursor stays on its own card
 }
 
 // View renders the current screen, applying the boss-key disguise last.

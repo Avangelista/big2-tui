@@ -299,7 +299,7 @@ func TestTurnActivatesAfterSlide(t *testing.T) {
 			{Seat: 3, CardCount: 2, Connected: true},
 		},
 		YourHand: parseHand(t, "4D 4H 2S"),
-		Table:    parseHand(t, "6H 6S"), TableBy: 1, Turn: 0, Winner: -1,
+		Table:    parseHand(t, "6H"), TableBy: 1, Turn: 0, Winner: -1,
 	}
 	m.Update(protocol.StateSnapshotMsg{Snap: s})
 
@@ -318,6 +318,67 @@ func TestTurnActivatesAfterSlide(t *testing.T) {
 	}
 	if !strings.Contains(m.selfBand(), "∙") {
 		t.Fatal("your hand should show the on-turn cursor after the card lands")
+	}
+}
+
+// tableTurnSnap builds a your-turn in-game snapshot with a combo already on the table
+// (played by seat 1), so PlayableSet narrows the hand once the slide settles.
+func tableTurnSnap(rev int, hand, table []game.Card) protocol.StateSnapshot {
+	return protocol.StateSnapshot{
+		Phase: protocol.InGame, Rev: rev, YouSeat: 0,
+		Players: []protocol.PlayerView{
+			{Seat: 0, IsYou: true, IsTurn: true, CardCount: len(hand), Connected: true},
+			{Seat: 1, CardCount: 5, Connected: true},
+		},
+		YourHand: hand, Table: table, TableBy: 1, Turn: 0, Winner: -1,
+	}
+}
+
+// TestTurnResetsCursorToLowestPlayable: when your turn begins the cursor jumps to the
+// lowest (leftmost) playable card, discarding any stale position from a prior turn.
+func TestTurnResetsCursorToLowestPlayable(t *testing.T) {
+	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.cursor = 6 // stale, from a previous turn
+	// A single ten is down; only TS (by suit), JD, KD, 2S beat it. Lowest is TS (index 3).
+	m.Update(protocol.StateSnapshotMsg{Snap: tableTurnSnap(1,
+		parseHand(t, "3D 5C 9H TS JD KD 2S"), parseHand(t, "TC"))})
+	m.SettlePile() // land the opponent's play so your turn activates
+	if got := m.hand()[m.cursor]; got.String() != "TS" {
+		t.Fatalf("cursor should reset to the lowest playable card TS, got %s (index %d)", got, m.cursor)
+	}
+}
+
+// TestGreyedCardsUnselectableAndSkipped: a card that can't complete a legal play greys
+// out - the cursor steps over it and space refuses to select it.
+func TestGreyedCardsUnselectableAndSkipped(t *testing.T) {
+	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	// Leading with 3S selected: the other 3s (pair/triple), the spade flush and the
+	// 4-7 straight all stay live; 9C greys out. Hand sorts to [3D 3C 3S 4S 5S 6S 7S 9C].
+	m.Update(protocol.StateSnapshotMsg{Snap: inGameSnap(1, parseHand(t, "3S 3D 3C 4S 5S 6S 7S 9C"))})
+	m.cursor = 2 // 3S
+	m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	if !m.selected[2] {
+		t.Fatal("space should have selected 3S")
+	}
+	nine := len(m.hand()) - 1 // 9C is the last (highest) card
+	if m.cardPlayable(nine) {
+		t.Fatal("9C should be greyed once 3S is selected")
+	}
+	// Stepping right past the straight never lands on the greyed 9C.
+	for i := 0; i < len(m.hand()); i++ {
+		m.Update(tea.KeyMsg{Type: tea.KeyRight})
+		if m.cursor == nine {
+			t.Fatalf("cursor landed on the greyed 9C at index %d", nine)
+		}
+	}
+	// Even forced onto 9C, space refuses to select it.
+	m.cursor = nine
+	before := len(m.selected)
+	m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	if len(m.selected) != before {
+		t.Fatal("space should not select a greyed card")
 	}
 }
 

@@ -86,6 +86,10 @@ func (g *GameState) Deal(rng *rand.Rand) error {
 	return nil
 }
 
+// FirstPlay reports whether the next play is the hand's opening play, which must
+// include OpenCard.
+func (g *GameState) FirstPlay() bool { return g.firstPlay }
+
 // Play validates and applies seat's play, returning events or an error (state
 // unchanged on error).
 func (g *GameState) Play(seat Seat, cards []Card) ([]Event, error) {
