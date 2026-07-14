@@ -46,6 +46,71 @@ type nopCommander struct{}
 
 func (nopCommander) Submit(room.Command) {}
 
+// glyphCol returns the leftmost display column of glyph in a rendered frame, or -1.
+func glyphCol(frame string, glyph rune) int {
+	best := -1
+	for _, line := range strings.Split(frame, "\n") {
+		s := stripStyling(line)
+		if i := strings.IndexRune(s, glyph); i >= 0 {
+			if col := len([]rune(s[:i])); best == -1 || col < best {
+				best = col
+			}
+		}
+	}
+	return best
+}
+
+// topAlignSnap builds an np-player in-game snapshot with the top opponent either on
+// turn (topPassed=false) or passed with you on turn (topPassed=true). No table, so no
+// pile slide interferes with the turn cue.
+func topAlignSnap(np int, hand []game.Card, topSeat int, topPassed bool) protocol.StateSnapshot {
+	players := make([]protocol.PlayerView, np)
+	for i := range players {
+		players[i] = protocol.PlayerView{Seat: i, CardCount: 5, Connected: true}
+	}
+	players[0].IsYou = true
+	players[0].CardCount = len(hand)
+	turn := topSeat
+	if topPassed {
+		players[topSeat].Passed = true
+		turn = 0
+	}
+	players[turn].IsTurn = true
+	return protocol.StateSnapshot{
+		Phase: protocol.InGame, Rev: 1, YouSeat: 0,
+		Players: players, YourHand: hand, Turn: turn, TableBy: -1, Winner: -1,
+	}
+}
+
+// TestTopPointerAlignsWithMarker: the top opponent's on-turn ▴ pointer and its
+// off-turn ✗ marker must land in the same column at any width (they use different
+// centring primitives, so even widths used to be off by one).
+func TestTopPointerAlignsWithMarker(t *testing.T) {
+	hand := parseHand(t, "4D 4H 5C 8D TS JH 2S")
+	render := func(w int, snap protocol.StateSnapshot) string {
+		m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+		m.Update(tea.WindowSizeMsg{Width: w, Height: 24})
+		m.Update(protocol.StateSnapshotMsg{Snap: snap})
+		return m.renderGame()
+	}
+	for _, w := range []int{80, 81, 64, 40, 34} {
+		for _, np := range []int{4, 2} {
+			topSeat := 2
+			if np == 2 {
+				topSeat = 1
+			}
+			ptr := glyphCol(render(w, topAlignSnap(np, hand, topSeat, false)), '▴')
+			mark := glyphCol(render(w, topAlignSnap(np, hand, topSeat, true)), '✗')
+			if ptr < 0 || mark < 0 {
+				t.Fatalf("w=%d np=%d: missing cue (▴=%d ✗=%d)", w, np, ptr, mark)
+			}
+			if ptr != mark {
+				t.Errorf("w=%d np=%d: top ▴ col %d != ✗ col %d", w, np, ptr, mark)
+			}
+		}
+	}
+}
+
 // captureCommander records submitted commands for assertions.
 type captureCommander struct{ cmds []room.Command }
 

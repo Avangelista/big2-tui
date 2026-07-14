@@ -327,11 +327,8 @@ func (m *Model) pileBoxLines(cs []game.Card) []string {
 func (m *Model) paintPileRow(row []rune) string {
 	tags := make([]uint8, len(row))
 	for i, r := range row {
-		switch r {
-		case '▴', '▾', '◂', '▸': // the active-turn pointer in the pile gap
-			tags[i] = tagSecondary
-			continue
-		}
+		// the active-turn pointer (▴▾◂▸) is primary, i.e. tagPlain/default, so it
+		// needs no special-casing here; only red faces are tagged.
 		if isRed, isSuit := m.suitInfo(r); isSuit && isRed {
 			tags[i] = tagRed
 			if i > 0 && tags[i-1] == tagPlain { // the rank sits just left of its pip
@@ -392,7 +389,17 @@ func (m *Model) pileFloat(w, h int) string {
 			top, ok = m.playerAtRel(1), true
 		}
 		if ok && m.showTurn(top) {
-			grid[0][w/2] = '▴'
+			// Land the ▴ in the exact column the off-turn ✗ marker uses, so the cue
+			// never jumps when the top player's status flips. That marker is centred
+			// over the top band (floor + " " + label), which is then centred on screen
+			// with lipgloss (left pad floors gap/2); replicate that and convert the
+			// screen column to a grid index in the centre column.
+			_, floor := hFan(top.CardCount, m.w, false)
+			bandW := lipgloss.Width(floor) + 1 + lipgloss.Width(m.label(top))
+			markerCol := (m.w-bandW)/2 + (bandW-1)/2
+			if gc := markerCol - (m.w-w)/2; gc >= 0 && gc < w {
+				grid[0][gc] = '▴'
+			}
 		}
 	}
 	out := make([]string, h)
@@ -653,22 +660,23 @@ func (m *Model) paintTagged(runes []rune, tags []uint8) string {
 	return b.String()
 }
 
-// markTier returns the colour tag for a status marker: all of them (the turn
-// pointer, passed ✗, gone ⊘) read secondary.
+// markTier returns the colour tag for a status marker: the active-turn pointer reads
+// primary (it is the whose-turn cue), the recessive passed ✗ / gone ⊘ read secondary.
 func markTier(mark string) uint8 {
-	if mark == "" {
-		return tagPlain
+	switch mark {
+	case "✗", "⊘":
+		return tagSecondary
 	}
-	return tagSecondary
+	return tagPlain // pointers ▴▾◂▸ (and "") : primary
 }
 
-// styleMark colours a marker string secondary (for the string call sites; the
+// styleMark colours a marker string by its tier (for the string call sites; the
 // rune-grid self marker uses markTier + paintTagged instead).
 func (m *Model) styleMark(mark string) string {
-	if mark == "" {
-		return mark
+	if markTier(mark) == tagSecondary {
+		return m.st.secondary.Render(mark)
 	}
-	return m.st.secondary.Render(mark)
+	return m.st.primary.Render(mark)
 }
 
 // paintBack colours an opponent card-back row: the ░ pattern goes blue; the outline
