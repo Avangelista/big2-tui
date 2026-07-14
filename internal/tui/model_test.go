@@ -82,6 +82,86 @@ func topAlignSnap(np int, hand []game.Card, topSeat int, topPassed bool) protoco
 	}
 }
 
+// colOf returns the display column (width, so pips and variation selectors count
+// correctly) of the first row containing sub, or -1.
+func colOf(block, sub string) int {
+	for _, ln := range strings.Split(block, "\n") {
+		s := stripStyling(ln)
+		if i := strings.Index(s, sub); i >= 0 {
+			return lipgloss.Width(s[:i])
+		}
+	}
+	return -1
+}
+
+// TestLabelStacksCountOverInitial: the card-count indicator stacks the count directly
+// above the player's initial in one column, in every seat and turn state. A top
+// opponent idling off turn (no ✗) once shifted the initial left by the empty mark slot;
+// on the self hand the count must clear the "›" more-cards flag with the initial beneath.
+func TestLabelStacksCountOverInitial(t *testing.T) {
+	// Top opponent (seat 2, letter B, 8 cards) in each turn state.
+	top := func(state int) *Model {
+		players := []protocol.PlayerView{
+			{Seat: 0, Letter: 'R', IsYou: true, IsTurn: state != 2, CardCount: 7, Connected: true},
+			{Seat: 1, Letter: 'A', CardCount: 5, Connected: true},
+			{Seat: 2, Letter: 'B', CardCount: 8, Connected: true},
+			{Seat: 3, Letter: 'C', CardCount: 4, Connected: true},
+		}
+		turn := 0
+		switch state {
+		case 1:
+			players[2].Passed = true
+		case 2:
+			players[2].IsTurn, turn = true, 2
+		}
+		m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+		m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+		m.Update(protocol.StateSnapshotMsg{Snap: protocol.StateSnapshot{
+			Phase: protocol.InGame, Rev: 1, YouSeat: 0, Players: players,
+			YourHand: parseHand(t, "3D 4C 5C 6C 7S 8D 9H"), Turn: turn, TableBy: -1, Winner: -1}})
+		return m
+	}
+	for _, tc := range []struct {
+		name  string
+		state int
+	}{{"idle off turn", 0}, {"passed", 1}, {"on turn", 2}} {
+		t.Run("top "+tc.name, func(t *testing.T) {
+			band := top(tc.state).topBand(4, 60)
+			cCol, lCol := colOf(band, "8"), colOf(band, "B")
+			if cCol < 0 || lCol < 0 {
+				t.Fatalf("missing count(%d)/initial(%d) in\n%s", cCol, lCol, band)
+			}
+			if cCol != lCol {
+				t.Errorf("count col %d != initial col %d\n%s", cCol, lCol, band)
+			}
+		})
+	}
+
+	// Self hand, narrow so the "›" more-cards flag shows: the count sits right of the
+	// flag and the initial lines up beneath the count.
+	t.Run("self with more-cards flag", func(t *testing.T) {
+		m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+		m.Update(tea.WindowSizeMsg{Width: 42, Height: 22})
+		m.Update(protocol.StateSnapshotMsg{Snap: protocol.StateSnapshot{
+			Phase: protocol.InGame, Rev: 1, YouSeat: 0,
+			Players:  []protocol.PlayerView{{Seat: 0, Letter: 'R', IsYou: true, IsTurn: true, CardCount: 12, Connected: true}},
+			YourHand: parseHand(t, "3D 4C 5C 6C 7S 8D 9H TC JD JS KH 2S"), Turn: 0, TableBy: -1, Winner: -1}})
+		m.cursor = 0
+		m.recomputePlayable() // left end: the "›" flag shows on the right
+		band := m.selfBand()
+		flag, cCol, lCol := colOf(band, "›"), colOf(band, "12"), colOf(band, "R")
+		if flag < 0 || cCol < 0 || lCol < 0 {
+			t.Fatalf("missing flag(%d)/count(%d)/initial(%d) in\n%s", flag, cCol, lCol, band)
+		}
+		if cCol <= flag {
+			t.Errorf("count col %d should be right of the › flag at %d\n%s", cCol, flag, band)
+		}
+		if cCol != lCol {
+			t.Errorf("count col %d != initial col %d\n%s", cCol, lCol, band)
+		}
+	})
+}
+
 // TestTopPointerAlignsWithMarker: the top opponent's on-turn ▴ pointer and its
 // off-turn ✗ marker must land in the same column at any width (they use different
 // centring primitives, so even widths used to be off by one).

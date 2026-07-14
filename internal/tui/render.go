@@ -37,15 +37,28 @@ func (m *Model) playerAtRel(rel int) protocol.PlayerView {
 	return m.snap.Players[(m.snap.YouSeat+rel)%n]
 }
 
-// label renders a player as "<L> <count>". The turn cue is colour - primary on
-// turn, secondary off - both the same width so the layout never drifts. The
-// active-player pointer lives in the pile gap (see addTurnPointer), not here.
-func (m *Model) label(p protocol.PlayerView) string {
-	inner := fmt.Sprintf("%c %d", m.letterFor(p.Seat), p.CardCount)
+// labelParts renders a player's card-count indicator as two lines: the card count on
+// top, their initial below. The turn cue is colour - primary on turn, secondary off -
+// both the same width so the layout never drifts. The active-player pointer lives in
+// the pile gap (see addTurnPointer), not here.
+func (m *Model) labelParts(p protocol.PlayerView) (count, letter string) {
+	st := m.st.secondary
 	if m.showTurn(p) {
-		return m.st.primary.Render(inner)
+		st = m.st.primary
 	}
-	return m.st.secondary.Render(inner)
+	return st.Render(fmt.Sprintf("%d", p.CardCount)), st.Render(string(m.letterFor(p.Seat)))
+}
+
+// labelW is the display width of the two-line indicator - its widest line, the count.
+func (m *Model) labelW(p protocol.PlayerView) int {
+	return len(fmt.Sprintf("%d", p.CardCount))
+}
+
+// labelBlock stacks the count over the initial, aligned to a (Left for the self hand
+// and the left opponent, Right for the right opponent).
+func (m *Model) labelBlock(p protocol.PlayerView, a lipgloss.Position) string {
+	count, letter := m.labelParts(p)
+	return lipgloss.JoinVertical(a, count, letter)
 }
 
 // showTurn reports whether p should be drawn as the active player: it is their turn
@@ -172,28 +185,44 @@ func (m *Model) topBand(n, w int) string {
 		return "" // 3 players: no top seat
 	}
 	if p.CardCount == 0 {
-		// No cards left (this player just played their last card and won): label only,
+		// No cards left (this player just played their last card and won): indicator only,
 		// keeping the band's 2-row height so the board doesn't shift.
-		return lipgloss.JoinVertical(lipgloss.Left, m.label(p), "")
+		return m.labelBlock(p, lipgloss.Left)
 	}
-	// The label rides the floor row (same width both turns, so it never moves
-	// horizontally). The band is a fixed 2 rows so the board never shifts: on turn
-	// the ░ back grows down toward the centre above the floor, off turn only the
-	// floor shows (receded to the top edge) and row 2 holds the last-play marker.
+	// The two-line indicator (count over initial) rides the right of the band, the same
+	// width both turns so it never drifts. The band is a fixed 2 rows so the board never
+	// shifts: on turn the ░ back grows down toward the centre above the floor, off turn
+	// only the floor shows (receded to the top edge) and row 2 holds the status marker.
 	active := m.showTurn(p)
 	fill, floor := hFan(p.CardCount, w, active)
-	// The label stays pinned to the top row. On turn the full card back shows (░ body
-	// over its floor) and the ▴ turn pointer sits in the pile gap just below (see
-	// pileFloat). Off turn the floor is on top and row 2 holds the status marker.
+	count, letter := m.labelParts(p)
 	if active {
+		// Count beside the ░ body, initial beside the floor; the ▴ turn pointer sits in
+		// the pile gap just below (see pileFloat).
 		return lipgloss.JoinVertical(lipgloss.Left,
-			m.paintBack(fill, true)+" "+m.label(p), m.paintBack(floor, true))
+			m.paintBack(fill, true)+" "+count, m.paintBack(floor, true)+" "+letter)
 	}
-	// Centre the marker over the whole band (label included) so it lands at screen
-	// centre, aligned with the on-turn ▴ pointer (which lives in the pile gap).
-	row0 := m.paintBack(floor, false) + " " + m.label(p)
-	mark := lipgloss.PlaceHorizontal(lipgloss.Width(row0), lipgloss.Center, m.styleMark(m.oppMark(p, "▴")))
-	return lipgloss.JoinVertical(lipgloss.Left, row0, mark)
+	// Off turn: the count rides the floor (top row); the initial and the centred status
+	// marker share the bottom row. Centre the marker over the whole band width (bandInnerW,
+	// matching the pointer's bandW) so it lands at screen centre, aligned with the on-turn
+	// ▴ pointer in the pile gap; the initial sits at the right, clear of the centred mark.
+	floorW := lipgloss.Width(floor)
+	bandInnerW := floorW + 1 + m.labelW(p)
+	row0 := m.paintBack(floor, false) + " " + count
+	markCol := (bandInnerW - 1) / 2
+	letterCol := floorW + 1
+	gap := letterCol - markCol - 1
+	if gap < 0 {
+		gap = 0
+	}
+	// The mark slot is always one column wide - a space when idle - so the initial lines
+	// up under the count whether or not a ✗/⊘ is showing.
+	markGlyph := " "
+	if mk := m.oppMark(p, "▴"); mk != "" {
+		markGlyph = m.styleMark(mk)
+	}
+	row1 := strings.Repeat(" ", markCol) + markGlyph + strings.Repeat(" ", gap) + letter
+	return lipgloss.JoinVertical(lipgloss.Left, row0, row1)
 }
 
 // midRow: left opponent flush-left, right opponent flush-right, pile centred,
@@ -215,9 +244,10 @@ func (m *Model) midRow(n, w, midH int) string {
 		sideW = (w - centerW) / 2
 	}
 
-	leftCol := lipgloss.Place(sideW, midH, lipgloss.Left, lipgloss.Center, m.sideBlock(left, midH-1, true))
+	// midH-2 leaves room for the two-line indicator (count over initial) below each fan.
+	leftCol := lipgloss.Place(sideW, midH, lipgloss.Left, lipgloss.Center, m.sideBlock(left, midH-2, true))
 	centerCol := m.pileFloat(centerW, midH)
-	rightCol := lipgloss.Place(sideW, midH, lipgloss.Right, lipgloss.Center, m.sideBlock(right, midH-1, false))
+	rightCol := lipgloss.Place(sideW, midH, lipgloss.Right, lipgloss.Center, m.sideBlock(right, midH-2, false))
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftCol, centerCol, rightCol)
 }
 
@@ -249,21 +279,26 @@ func pileNudge(rel, n int) (dx, dy int) {
 	return 0, 0
 }
 
-// sideBlock: a side opponent's sideways fan, label pinned at the anchored outer
-// edge (left player's big card at the bottom, right's at the top). On turn each
-// card reaches toward the centre; off turn it recedes, so the label never moves.
+// sideBlock: a side opponent's sideways fan, two-line indicator (count over initial)
+// pinned at the anchored outer edge (left player's big card at the bottom, right's at
+// the top). On turn each card reaches toward the centre; off turn it recedes, so the
+// indicator never moves.
 func (m *Model) sideBlock(p protocol.PlayerView, budget int, leftSide bool) string {
+	align := lipgloss.Left
+	if !leftSide {
+		align = lipgloss.Right
+	}
 	if p.CardCount == 0 {
-		return m.label(p) // no cards left (this player just won): label only
+		return m.labelBlock(p, align) // no cards left (this player just won): indicator only
 	}
 	var fan []string
 	active := m.showTurn(p)
-	align, arrow := lipgloss.Left, "◂" // left opponent: ◂ points left at their fan
+	arrow := "◂" // left opponent: ◂ points left at their fan
 	if leftSide {
 		fan = vFanLeft(p.CardCount, budget, active)
 	} else {
 		fan = vFanRight(p.CardCount, budget, active)
-		align, arrow = lipgloss.Right, "▸" // right opponent: ▸ points right at their fan
+		arrow = "▸" // right opponent: ▸ points right at their fan
 	}
 	// Paint the fan first: primary outline on their turn (blue ░), else secondary gray.
 	for i := range fan {
@@ -280,8 +315,9 @@ func (m *Model) sideBlock(p protocol.PlayerView, budget int, leftSide bool) stri
 			fan[mid] = mark + " " + fan[mid]
 		}
 	}
-	// The label sits on its own row, so the side fan gets no gap before it.
-	return lipgloss.JoinVertical(align, append(fan, m.label(p))...)
+	// The two-line indicator (count over initial) sits on its own rows below the fan.
+	count, letter := m.labelParts(p)
+	return lipgloss.JoinVertical(align, append(fan, count, letter)...)
 }
 
 // pileBoxLines renders one played combo as the 4 rows of a horizontal face-up box.
@@ -396,11 +432,11 @@ func (m *Model) pileFloat(w, h int) string {
 		if ok && m.showTurn(top) {
 			// Land the ▴ in the exact column the off-turn ✗ marker uses, so the cue
 			// never jumps when the top player's status flips. That marker is centred
-			// over the top band (floor + " " + label), which is then centred on screen
-			// with lipgloss (left pad floors gap/2); replicate that and convert the
-			// screen column to a grid index in the centre column.
+			// over the top band (floor + " " + the count indicator, width labelW), which
+			// is then centred on screen with lipgloss (left pad floors gap/2); replicate
+			// that and convert the screen column to a grid index in the centre column.
 			_, floor := hFan(top.CardCount, m.w, false)
-			bandW := lipgloss.Width(floor) + 1 + lipgloss.Width(m.label(top))
+			bandW := lipgloss.Width(floor) + 1 + m.labelW(top)
 			markerCol := (m.w-bandW)/2 + (bandW-1)/2
 			if gc := markerCol - (m.w-w)/2; gc >= 0 && gc < w {
 				grid[0][gc] = '▴'
@@ -457,11 +493,11 @@ func pasteBox(grid [][]rune, box []string, x0, y0 int) {
 func (m *Model) selfBand() string {
 	me := m.snap.Players[m.snap.YouSeat]
 	hand := m.hand()
-	label := m.label(me)
-	// Emptied hand (you played your last card and won): no cards, just the label
-	// pinned at the bottom row so the band keeps its height.
+	count, letter := m.labelParts(me)
+	// Emptied hand (you played your last card and won): no cards, just the indicator
+	// (count over initial) on the bottom two rows so the band keeps its height.
 	if len(hand) == 0 {
-		return "\n\n\n  " + label
+		return "\n\n  " + count + "\n  " + letter
 	}
 	myTurn := m.isMyTurn()
 	maxCells := m.maxHandCells()
@@ -517,15 +553,20 @@ func (m *Model) selfBand() string {
 	for r := range runeRows {
 		painted[r] = m.paintTagged(runeRows[r], tagRows[r])
 	}
-	painted[3] += " " + label // a gap between the hand and the label
+	// The indicator stacks count over initial on rows 2 and 3, aligned in one column a
+	// gap past the widest row. Row 2 also carries the "›" more-cards flag, so padding to
+	// that width moves the count clear of the arrow while the initial lines up beneath.
+	lw := maxi(lipgloss.Width(painted[2]), lipgloss.Width(painted[3]))
+	painted[2] += strings.Repeat(" ", lw-lipgloss.Width(painted[2])) + " " + count
+	painted[3] += strings.Repeat(" ", lw-lipgloss.Width(painted[3])) + " " + letter
 	return lipgloss.JoinVertical(lipgloss.Left, painted...)
 }
 
-// maxHandCells is how many hand cards fit across the screen, reserving the 2-col
-// left margin, box overhead and trailing label.
+// maxHandCells is how many hand cards fit across the screen, reserving the 2-col left
+// margin, box overhead, the trailing count indicator and the "›" more-cards flag beside it.
 func (m *Model) maxHandCells() int {
 	me := m.snap.Players[m.snap.YouSeat]
-	n := (m.w - 6 - lipgloss.Width(m.label(me))) / 3
+	n := (m.w - 8 - m.labelW(me)) / 3
 	if n < 1 {
 		n = 1
 	}
