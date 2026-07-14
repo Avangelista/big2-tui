@@ -45,9 +45,11 @@ difficulty, `+`/`-` add/remove a bot (host), `esc` quit.
 **In-game:** `←`/`→` move the cursor (or scroll your hand when it isn't your turn),
 `space` select/deselect, `enter` play the selection (or the card under the cursor if
 nothing is selected), `x` pass, `c` clear selection, `s` sort by rank or suit,
-`esc` quit.
+`1`-`5` send a quick reaction (`r` shows the list), `esc` quit (asks to confirm).
+On your turn only the cards you can legally play stay lit; the cursor skips the rest.
 
-**Between hands:** `enter` deals the next hand (host), `esc` quit.
+**Between hands:** `enter` deals the next hand (host, once enough players remain),
+`esc` quit.
 
 ## Rules (this build)
 
@@ -62,8 +64,9 @@ nothing is selected), `x` pass, `c` clear selection, `s` sort by rank or suit,
 - Scored match: each hand, you take penalty points for the cards left in your hand
   (×2 at 8 to 9, ×3 at 10 to 12, ×4 at 13+). Totals carry over and the host deals
   again with **enter**; lowest total wins.
-- Drop out and your seat stays in as a dead player (`⊘`) that auto-passes, with no
-  rejoining.
+- Drop out mid-hand and your seat auto-passes as a dead player (`⊘`); between hands
+  you're shown as disconnected and dropped from the next deal, as long as enough
+  players are left (otherwise the host can only quit). No rejoining.
 
 ## Layout
 
