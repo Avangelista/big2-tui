@@ -1,10 +1,8 @@
-# deuception
+# big2-tui
 
 A networked, terminal Big 2 (Deuces / 鋤大弟). One binary is both the game and the
 server: you run it, land in a waiting room, and friends join over SSH, nothing to
-install. You only ever see your own hand; everyone else is a face-down count. The
-board is deliberately plain so it doesn't obviously read as a game, and there's even
-a key to hide the card UI. Short-handed? The host can fill seats with bots.
+install.
 
 ![deuception: a four-player hand in progress in the terminal](preview.png)
 
@@ -16,7 +14,7 @@ a key to hide the card UI. Short-handed? The host can fill seats with bots.
 ## Run
 
 ```sh
-make run                 # build + start on :2222; you host and play locally
+make run # build + start on :2222; you host and play locally
 # or
 go build -o bin/deuception ./cmd/server && ./bin/deuception -port 2222
 ```
