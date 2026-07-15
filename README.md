@@ -87,6 +87,9 @@ make vet
 make preview   # dump every screen at a few sizes
 ```
 
+## FYN
+Fynffyn
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
