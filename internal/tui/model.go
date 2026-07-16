@@ -594,6 +594,9 @@ func (m *Model) setHint(text string) tea.Cmd {
 }
 
 func (m *Model) keyOver(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.reactKey(k) { // the digit / - / = keys fire a reaction on the score screen too
+		return m, nil
+	}
 	switch k.String() {
 	case "enter":
 		if m.snap.IsHost && m.enoughToContinue() {

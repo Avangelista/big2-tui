@@ -1060,3 +1060,58 @@ func TestKickExemptFromMinSize(t *testing.T) {
 		t.Errorf("kick screen should show on a tiny window, got:\n%s", out)
 	}
 }
+
+// overSnap builds a Finished-phase (score screen) snapshot with you as host.
+func overSnap(players []protocol.PlayerView) protocol.StateSnapshot {
+	return protocol.StateSnapshot{
+		Phase: protocol.Finished, Rev: 1, YouSeat: 0, IsHost: true, MinStart: 3,
+		Players: players, Winner: 1, Turn: -1,
+	}
+}
+
+// TestScoreScreenReactions: a reaction flashes beside its own player's row on the score
+// screen, and the reserved column is absent when nobody is reacting.
+func TestScoreScreenReactions(t *testing.T) {
+	players := []protocol.PlayerView{
+		{Seat: 0, Letter: 'A', IsYou: true, IsHost: true, Connected: true, Score: 0},
+		{Seat: 1, Letter: 'B', Connected: true, Score: 7},
+		{Seat: 2, Letter: 'C', Connected: true, Score: 14},
+	}
+	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 50, Height: 16})
+	m.Update(protocol.StateSnapshotMsg{Snap: overSnap(players)})
+
+	want := protocol.Emotes[3]
+	if strings.Contains(stripStyling(m.renderOver()), want) {
+		t.Fatalf("idle score screen should show no reaction, but found %q", want)
+	}
+	m.emotes = map[int]emoteState{1: {3, 1}} // B (seat 1) reacts preset 3
+	seen := 0
+	for _, ln := range strings.Split(stripStyling(m.renderOver()), "\n") {
+		if strings.Contains(ln, want) {
+			seen++
+			if !strings.Contains(ln, "7") { // B's score
+				t.Errorf("reaction landed on the wrong row: %q", ln)
+			}
+		}
+	}
+	if seen != 1 {
+		t.Errorf("reaction should appear on exactly one row, got %d", seen)
+	}
+}
+
+// TestReactOnScoreScreen: the reaction keys fire on the score screen too (the room now
+// broadcasts emotes while Finished).
+func TestReactOnScoreScreen(t *testing.T) {
+	cc := &captureCommander{}
+	m := New(cc, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 50, Height: 16})
+	m.Update(protocol.StateSnapshotMsg{Snap: overSnap([]protocol.PlayerView{
+		{Seat: 0, Letter: 'A', IsYou: true, IsHost: true, Connected: true},
+		{Seat: 1, Letter: 'B', Connected: true},
+	})})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}) // preset 1
+	if ec, ok := cc.last().(room.EmoteCmd); !ok || ec.Code != 1 {
+		t.Fatalf("a digit on the score screen should send EmoteCmd code 1, got %#v", cc.last())
+	}
+}

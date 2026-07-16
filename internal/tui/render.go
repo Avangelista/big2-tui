@@ -972,9 +972,16 @@ func (m *Model) renderOver() string {
 	if s.Winner >= 0 {
 		b.WriteString(m.st.primary.Render(fmt.Sprintf("%c wins", m.letterFor(s.Winner))) + "\n\n")
 	}
-	// Scoreboard rows read like the lobby roster: primary letter+score, secondary
-	// tags (one space before the tag, as in the lobby). The winner is named by the
-	// headline, not by a per-row colour.
+	// Scoreboard rows read like the lobby roster: primary letter+score, secondary tags
+	// (one space before the tag). A reaction flashes to the right of its player's row,
+	// aligned in a reserved column that appears only while someone's reacting (so the
+	// idle board stays compact). The winner is named by the headline, not a row colour.
+	type scoreRow struct {
+		text string
+		seat int
+	}
+	var rows []scoreRow
+	maxW, anyReact := 0, false
 	for _, p := range rankByScore(s.Players) {
 		tag := ""
 		switch {
@@ -990,7 +997,19 @@ func (m *Model) renderOver() string {
 		if tag != "" {
 			row += m.st.secondary.Render(tag)
 		}
-		b.WriteString(row + "\n")
+		rows = append(rows, scoreRow{row, p.Seat})
+		if w := lipgloss.Width(row); w > maxW {
+			maxW = w
+		}
+		if m.emoteFor(p.Seat) != "" {
+			anyReact = true
+		}
+	}
+	for _, sr := range rows {
+		if anyReact {
+			sr.text += strings.Repeat(" ", maxW-lipgloss.Width(sr.text)) + "  " + m.emoteZone(sr.seat)
+		}
+		b.WriteString(sr.text + "\n")
 	}
 	b.WriteString("\n")
 	switch {
