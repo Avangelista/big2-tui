@@ -1040,7 +1040,7 @@ func (m *Model) gameFooter(w int) string {
 		return "quit?  enter yes  esc no"
 	}
 	if m.reacting {
-		return emotePicker(w)
+		return emotePicker(w, m.reactPage)
 	}
 	full := "arrows move  space pick  enter play  x pass  s sort  r react  esc quit"
 	if lipgloss.Width(full) <= w {
@@ -1051,16 +1051,29 @@ func (m *Model) gameFooter(w int) string {
 
 // emotePicker is the quick-chat legend that replaces the footer while the picker is
 // open: each preset on its number key. It mirrors the digits that always send.
-func emotePicker(w int) string {
-	parts := make([]string, len(protocol.Emotes))
-	for i, e := range protocol.Emotes {
-		parts[i] = fmt.Sprintf("%d %s", i+1, e)
+// emotePages splits the ten presets across three footer screens: keys 1-4, 5-7, 8-0.
+var emotePages = [][2]int{{0, 4}, {4, 7}, {7, 10}}
+
+// emotePicker is the quick-chat legend for one page: each preset on its number key (1-9,
+// then 0 for the tenth), with r cycling pages and esc closing. The digits fire regardless
+// of which page is showing.
+func emotePicker(w, page int) string {
+	if page < 0 || page >= len(emotePages) {
+		page = 0
 	}
-	full := strings.Join(parts, "  ") + "  esc back" // two spaces between options, like the legend
+	lo, hi := emotePages[page][0], emotePages[page][1]
+	if hi > len(protocol.Emotes) {
+		hi = len(protocol.Emotes)
+	}
+	var parts []string
+	for i := lo; i < hi; i++ {
+		parts = append(parts, fmt.Sprintf("%d %s", (i+1)%10, protocol.Emotes[i])) // index 9 -> key 0
+	}
+	full := strings.Join(parts, "  ") + "  r more  esc back" // two spaces between options, like the legend
 	if lipgloss.Width(full) <= w {
 		return full
 	}
-	return strings.Join(parts, " ") + " esc" // tighter separators, but keep the number-word gap
+	return strings.Join(parts, " ") + " r esc" // tighter separators, but keep the number-word gap
 }
 
 // ---- helpers ----

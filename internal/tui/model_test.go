@@ -162,61 +162,65 @@ func TestLabelStacksCountOverInitial(t *testing.T) {
 	})
 }
 
-// TestReactDigitSends: a number key sends the matching quick-chat reaction, picker open
-// or not, on or off turn; a digit past the preset range does nothing.
+// TestReactDigitSends: a number key sends the matching reaction - keys 1-9 map to presets
+// 0-8, and 0 maps to the tenth - picker open or not, on or off turn.
 func TestReactDigitSends(t *testing.T) {
 	cc := &captureCommander{}
 	m := New(cc, "id", "hint", lipgloss.DefaultRenderer())
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.Update(protocol.StateSnapshotMsg{Snap: inGameSnap(1, parseHand(t, "3D 5C 9H"))})
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // "hurry" (code 2)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // preset 2
 	if ec, ok := cc.last().(room.EmoteCmd); !ok || ec.Code != 2 {
 		t.Fatalf("digit 3 should send EmoteCmd code 2, got %#v", cc.last())
 	}
 	cc.cmds = nil
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}}) // no 9th preset
-	if cc.last() != nil {
-		t.Fatalf("a digit past the presets should not send, got %#v", cc.last())
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'0'}}) // 0 -> the tenth preset
+	if ec, ok := cc.last().(room.EmoteCmd); !ok || ec.Code != 9 {
+		t.Fatalf("digit 0 should send EmoteCmd code 9, got %#v", cc.last())
 	}
 }
 
-// TestReactPickerToggle: r opens/closes the picker, which swaps the footer for the preset
-// legend; the digits work regardless.
+// TestReactPickerToggle: r opens the picker and then pages through the presets; esc closes
+// it. The digits work regardless of page.
 func TestReactPickerToggle(t *testing.T) {
 	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.Update(protocol.StateSnapshotMsg{Snap: inGameSnap(1, parseHand(t, "3D 5C 9H"))})
-	if strings.Contains(m.gameFooter(80), "lol") {
+	if strings.Contains(m.gameFooter(80), protocol.Emotes[0]) {
 		t.Fatal("closed footer should show controls, not presets")
 	}
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if !m.reacting || !strings.Contains(m.gameFooter(80), "lol") {
-		t.Fatal("r should open the picker and list presets")
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}) // open at the first page
+	if !m.reacting || m.reactPage != 0 || !strings.Contains(m.gameFooter(80), protocol.Emotes[0]) {
+		t.Fatal("r should open the picker at the first preset page")
 	}
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}) // r pages forward, not closes
+	if !m.reacting || m.reactPage != 1 {
+		t.Fatalf("r should advance to page 1, got reacting=%v page=%d", m.reacting, m.reactPage)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if m.reacting {
-		t.Fatal("r again should close the picker")
+		t.Fatal("esc should close the picker")
 	}
 }
 
 // TestPickerStaysOpenOnReact: sending a reaction with the picker open leaves it open so
-// you can fire several; r closes it.
+// you can fire several; esc closes it.
 func TestPickerStaysOpenOnReact(t *testing.T) {
 	cc := &captureCommander{}
 	m := New(cc, "id", "hint", lipgloss.DefaultRenderer())
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.Update(protocol.StateSnapshotMsg{Snap: inGameSnap(1, parseHand(t, "3D 5C 9H"))})
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}) // open
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}) // react (why, code 1)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}) // react (preset 1)
 	if !m.reacting {
 		t.Fatal("the picker should stay open after sending a reaction")
 	}
 	if ec, ok := cc.last().(room.EmoteCmd); !ok || ec.Code != 1 {
 		t.Fatalf("the digit should still send while the picker is open, got %#v", cc.last())
 	}
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}) // close
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if m.reacting {
-		t.Fatal("r should close the picker")
+		t.Fatal("esc should close the picker")
 	}
 }
 
@@ -294,27 +298,29 @@ func TestReactionsOnInitialLine(t *testing.T) {
 	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
 	m.Update(tea.WindowSizeMsg{Width: 72, Height: 22})
 	m.Update(protocol.StateSnapshotMsg{Snap: snap})
-	m.emotes = map[int]emoteState{0: {0, 1}, 1: {1, 1}, 2: {2, 1}, 3: {3, 1}} // lol why hurry bro
+	m.emotes = map[int]emoteState{0: {0, 1}, 1: {1, 1}, 2: {2, 1}, 3: {3, 1}} // presets 0-3
 
 	frame := stripStyling(m.renderGame())
-	for _, e := range []string{"lol", "why", "hurry", "bro"} {
-		if !strings.Contains(frame, e) {
-			t.Errorf("reaction %q missing from frame", e)
+	for i := 0; i < 4; i++ {
+		if !strings.Contains(frame, protocol.Emotes[i]) {
+			t.Errorf("reaction %q missing from frame", protocol.Emotes[i])
 		}
 	}
-	// Left opponent: reaction on the initial row (last), not the count row above it.
+	// Left opponent (preset 1): reaction on the initial row (last), not the count row above.
+	left := protocol.Emotes[1]
 	lrows := strings.Split(m.sideBlock(players[1], 8, true), "\n")
 	initRow, countRow := stripStyling(lrows[len(lrows)-1]), stripStyling(lrows[len(lrows)-2])
-	if !strings.Contains(initRow, "A") || !strings.Contains(initRow, "why") {
+	if !strings.Contains(initRow, "A") || !strings.Contains(initRow, left) {
 		t.Errorf("left reaction should share the initial row, got %q", initRow)
 	}
-	if strings.Contains(countRow, "why") {
+	if strings.Contains(countRow, left) {
 		t.Errorf("reaction should not be on the count row, got %q", countRow)
 	}
-	// Right opponent: reaction sits inward (left) of the initial.
+	// Right opponent (preset 3): reaction sits inward (left) of the initial.
+	right := protocol.Emotes[3]
 	rrows := strings.Split(m.sideBlock(players[3], 8, false), "\n")
 	rrow := stripStyling(rrows[len(rrows)-1])
-	if strings.Index(rrow, "bro") > strings.Index(rrow, "C") {
+	if strings.Index(rrow, right) > strings.Index(rrow, "C") {
 		t.Errorf("right reaction should sit left of the initial, got %q", rrow)
 	}
 }

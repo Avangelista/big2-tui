@@ -52,6 +52,7 @@ type Model struct {
 	pendingBotLevel int // difficulty applied to the next added bot (1-9)
 
 	reacting    bool               // the quick-chat picker is open (footer shows the presets)
+	reactPage   int                // which preset page the picker shows; r cycles, digits stay absolute
 	confirmQuit bool               // esc in-game asks first; enter confirms, esc cancels
 	emotes      map[int]emoteState // active reaction per absolute seat, flashed beside its label
 	emoteGen    int                // bumped per reaction so a stale timer can't clear a newer one
@@ -465,11 +466,18 @@ func isLetter(b byte) bool {
 // off turn, with or without the picker open) and reports whether it handled the key.
 func (m *Model) reactKey(k tea.KeyMsg) bool {
 	s := k.String()
-	if len(s) != 1 || s[0] < '1' || int(s[0]-'0') > len(protocol.Emotes) {
+	if len(s) != 1 || s[0] < '0' || s[0] > '9' {
 		return false
 	}
-	m.room.Submit(room.EmoteCmd{ID: m.id, Code: int(s[0] - '1')})
-	// The picker stays open after sending, so you can fire several; esc or r closes it.
+	code := int(s[0]-'0') - 1 // keys 1-9 -> presets 0-8
+	if s[0] == '0' {
+		code = 9 // 0 -> the tenth preset
+	}
+	if code < 0 || code >= len(protocol.Emotes) {
+		return false
+	}
+	m.room.Submit(room.EmoteCmd{ID: m.id, Code: code})
+	// The picker stays open after sending, so you can fire several; esc closes it.
 	return true
 }
 
@@ -481,7 +489,11 @@ func (m *Model) keyGame(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	myTurn := m.isMyTurn()
 	switch k.String() {
 	case "r":
-		m.reacting = !m.reacting // toggle the quick-chat picker (a reminder; digits work regardless)
+		if m.reacting {
+			m.reactPage = (m.reactPage + 1) % len(emotePages) // r pages through the presets
+		} else {
+			m.reacting, m.reactPage = true, 0 // open the picker (a reminder; digits work regardless)
+		}
 	case "left":
 		// On turn move the cursor to the next playable card; off turn scroll the view.
 		if myTurn {
