@@ -101,7 +101,7 @@ func (m *Model) keySettings(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.keyReactionEdit(k)
 	}
 	switch k.String() {
-	case "esc", "~":
+	case "esc", "`", "~":
 		m.settingsOpen = false
 		return m, nil
 	case "tab":

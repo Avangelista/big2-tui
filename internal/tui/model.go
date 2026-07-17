@@ -460,8 +460,8 @@ func (m *Model) keyWaiting(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.snap.IsHost {
 			m.room.Submit(room.RemoveBotCmd{ID: m.id})
 		}
-	case key == "~" && m.snap.IsHost:
-		m.openSettings() // the host's house-rules page ('~' so every letter stays pickable)
+	case (key == "`" || key == "~") && m.snap.IsHost:
+		m.openSettings() // '`' (labelled '~') opens settings, so every letter stays pickable
 	case len(key) == 1 && isLetter(key[0]):
 		m.room.Submit(room.SetLetterCmd{ID: m.id, Letter: key[0]}) // server enforces uniqueness
 	}

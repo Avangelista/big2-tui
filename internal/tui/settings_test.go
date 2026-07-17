@@ -83,7 +83,18 @@ func TestSettingsPagesFitMinSize(t *testing.T) {
 }
 
 func TestSettingsOpenKey(t *testing.T) {
-	// '~' opens the page for the host only.
+	// Both the unshifted '`' and the shifted '~' open the page for the host.
+	for _, k := range []rune{'`', '~'} {
+		host := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+		host.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+		host.Update(protocol.StateSnapshotMsg{Snap: waitingSnap(true)})
+		host.Update(runeKey(k))
+		if !host.settingsOpen {
+			t.Errorf("host %q should open the settings page", string(k))
+		}
+	}
+
+	// A non-host cannot open it.
 	cc := &captureCommander{}
 	nonHost := New(cc, "id", "hint", lipgloss.DefaultRenderer())
 	nonHost.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
