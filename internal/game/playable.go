@@ -5,13 +5,14 @@ package game
 // empty means leading), and that includes openCard when opening is set. hand must be
 // the player's hand; selected must be a subset of it. Selected cards always report
 // true (they can be deselected). A card that reports false is unplayable (greyed) and
-// must not be selectable. Uses the default SimpleStraight variant, matching the room.
+// must not be selectable. r must be the game's ruleset so the enumeration matches what
+// the room will accept.
 //
 // It enumerates every legal completion of the selection - size fixed to the table's
 // size when beating, any of {1,2,3,5} when leading - and marks the cards of each. The
 // hand is at most 13 cards, so the enumeration (bounded by C(13,5)) is cheap enough
 // to run on every selection change.
-func PlayableSet(hand, selected, table []Card, opening bool, openCard Card) []bool {
+func PlayableSet(hand, selected, table []Card, opening bool, openCard Card, r Rules) []bool {
 	playable := make([]bool, len(hand))
 	idxOf := make(map[Card]int, len(hand))
 	for i, c := range hand {
@@ -33,7 +34,7 @@ func PlayableSet(hand, selected, table []Card, opening bool, openCard Card) []bo
 	var tbl *Combo
 	sizes := []int{1, 2, 3, 5}
 	if len(table) > 0 {
-		if c, err := Classify(table, SimpleStraight); err == nil {
+		if c, err := Classify(table, r); err == nil {
 			tbl = &c
 			sizes = []int{len(table)}
 		}
@@ -55,14 +56,14 @@ func PlayableSet(hand, selected, table []Card, opening bool, openCard Card) []bo
 			play := make([]Card, 0, s)
 			play = append(play, selected...)
 			play = append(play, extra...)
-			combo, err := Classify(play, SimpleStraight)
+			combo, err := Classify(play, r)
 			if err != nil {
 				return
 			}
 			if opening && !containsCard(play, openCard) {
 				return
 			}
-			if tbl != nil && !combo.Beats(*tbl) {
+			if tbl != nil && !combo.Beats(*tbl, r) {
 				return
 			}
 			mark(play)

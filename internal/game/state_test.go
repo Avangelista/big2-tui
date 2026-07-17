@@ -10,7 +10,7 @@ import (
 // Deal's post-conditions (opening card = lowest dealt, its holder leads).
 func gameWith(t *testing.T, hands ...string) *GameState {
 	t.Helper()
-	g := NewGame(len(hands), SimpleStraight)
+	g := NewGame(len(hands), DefaultRules())
 	for i, h := range hands {
 		g.Hands[i] = cards(t, h)
 		sortCards(g.Hands[i])
@@ -53,7 +53,7 @@ func hasEvent[T Event](evs []Event) bool {
 }
 
 func TestDealFourPlayers(t *testing.T) {
-	g := NewGame(4, SimpleStraight)
+	g := NewGame(4, DefaultRules())
 	if err := g.Deal(rand.New(rand.NewSource(1))); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestDealFourPlayers(t *testing.T) {
 func TestDealThreePlayers(t *testing.T) {
 	// several seeds to exercise the 3D-in-leftover edge case
 	for _, seed := range []int64{1, 2, 7, 13, 99, 100, 2024} {
-		g := NewGame(3, SimpleStraight)
+		g := NewGame(3, DefaultRules())
 		if err := g.Deal(rand.New(rand.NewSource(seed))); err != nil {
 			t.Fatal(err)
 		}
@@ -108,7 +108,7 @@ func TestDealThreePlayers(t *testing.T) {
 }
 
 func TestDealTwoPlayers(t *testing.T) {
-	g := NewGame(2, SimpleStraight)
+	g := NewGame(2, DefaultRules())
 	if err := g.Deal(rand.New(rand.NewSource(5))); err != nil {
 		t.Fatal(err)
 	}

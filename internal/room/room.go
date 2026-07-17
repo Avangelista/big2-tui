@@ -195,7 +195,7 @@ func (r *Room) handleStart(c StartCmd) {
 }
 
 func (r *Room) startGame() {
-	r.game = game.NewGame(len(r.seats), game.SimpleStraight)
+	r.game = game.NewGame(len(r.seats), game.DefaultRules())
 	if err := r.game.Deal(r.rng); err != nil {
 		safeSendAll(r.seats, protocol.ErrorMsg{Text: "failed to deal: " + err.Error()})
 		return

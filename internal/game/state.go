@@ -20,22 +20,22 @@ type GameState struct {
 	OpenCard Card // mandatory card for the hand's first play
 
 	firstPlay bool
-	sc        StraightChecker
+	rules     Rules
 }
 
-// NewGame creates a game for numSeats players; nil sc defaults to SimpleStraight.
-func NewGame(numSeats int, sc StraightChecker) *GameState {
-	if sc == nil {
-		sc = SimpleStraight
-	}
+// NewGame creates a game for numSeats players under r (the zero value is classic rules).
+func NewGame(numSeats int, r Rules) *GameState {
 	return &GameState{
 		NumSeats: numSeats,
 		Hands:    make([][]Card, numSeats),
 		Passed:   make([]bool, numSeats),
 		Winner:   -1,
-		sc:       sc,
+		rules:    r,
 	}
 }
+
+// Rules returns the game's ruleset.
+func (g *GameState) Rules() Rules { return g.rules }
 
 // Deal shuffles with rng and deals a fresh hand: 13 each (4p), 17 each plus the
 // leftover to the 3D holder (3p), or 17 each with 18 discarded (2p). The first
@@ -90,6 +90,14 @@ func (g *GameState) Deal(rng *rand.Rand) error {
 // include OpenCard.
 func (g *GameState) FirstPlay() bool { return g.firstPlay }
 
+// LeadFrom makes seat open the current hand with a free play (no open-card rule), used
+// for the winner-leads rule. Call after Deal.
+func (g *GameState) LeadFrom(seat Seat) {
+	g.Turn = seat
+	g.Leader = seat
+	g.firstPlay = false
+}
+
 // Play validates and applies seat's play, returning events or an error (state
 // unchanged on error).
 func (g *GameState) Play(seat Seat, cards []Card) ([]Event, error) {
@@ -99,7 +107,7 @@ func (g *GameState) Play(seat Seat, cards []Card) ([]Event, error) {
 	if seat != g.Turn {
 		return nil, ErrNotYourTurn
 	}
-	combo, err := Classify(cards, g.sc)
+	combo, err := Classify(cards, g.rules)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +121,7 @@ func (g *GameState) Play(seat Seat, cards []Card) ([]Event, error) {
 		if len(combo.Cards) != len(g.Table.Cards) {
 			return nil, ErrWrongComboSize
 		}
-		if !combo.Beats(*g.Table) {
+		if !combo.Beats(*g.Table, g.rules) {
 			return nil, ErrDoesNotBeat
 		}
 	}
@@ -123,6 +131,12 @@ func (g *GameState) Play(seat Seat, cards []Card) ([]Event, error) {
 	g.Table = &played
 	g.Leader = seat
 	g.firstPlay = false
+	if g.rules.Pass == PassReenter {
+		// A fresh play reopens the round: anyone who skipped can respond again.
+		for i := range g.Passed {
+			g.Passed[i] = false
+		}
+	}
 
 	events := []Event{PlayedEvent{Seat: seat, Combo: played}}
 	if len(g.Hands[seat]) == 0 {

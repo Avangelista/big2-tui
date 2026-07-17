@@ -34,7 +34,7 @@ func followPos(t *testing.T) *GameState {
 	t.Helper()
 	g := gameWith(t, "3C 3S 5D 5H", "4H 4S 6C 7C")
 	g.firstPlay = false
-	tbl, err := Classify(cards(t, "4H 4S"), SimpleStraight)
+	tbl, err := Classify(cards(t, "4H 4S"), DefaultRules())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestLegalPlaysFollow(t *testing.T) {
 		if len(p.Cards) != len(g.Table.Cards) {
 			t.Errorf("combo %v does not match the table size %d", p.Cards, len(g.Table.Cards))
 		}
-		if !p.Beats(*g.Table) {
+		if !p.Beats(*g.Table, DefaultRules()) {
 			t.Errorf("combo %v does not beat the table", p.Cards)
 		}
 	}
@@ -69,7 +69,7 @@ func TestLegalPlaysFollow(t *testing.T) {
 func TestLegalPlaysPassOnly(t *testing.T) {
 	g := gameWith(t, "3C 3S 8D", "4H 4S 6C")
 	g.firstPlay = false
-	tbl, err := Classify(cards(t, "4H 4S"), SimpleStraight)
+	tbl, err := Classify(cards(t, "4H 4S"), DefaultRules())
 	if err != nil {
 		t.Fatal(err)
 	}

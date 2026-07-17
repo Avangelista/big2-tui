@@ -20,14 +20,14 @@ func (g *GameState) LegalPlays(seat Seat) []Combo {
 			for i, j := range idx {
 				pick[i] = hand[j]
 			}
-			combo, err := Classify(pick, g.sc)
+			combo, err := Classify(pick, g.rules)
 			if err != nil {
 				return
 			}
 			if g.firstPlay && !containsCard(combo.Cards, g.OpenCard) {
 				return
 			}
-			if g.Table != nil && !combo.Beats(*g.Table) {
+			if g.Table != nil && !combo.Beats(*g.Table, g.rules) {
 				return
 			}
 			out = append(out, combo)

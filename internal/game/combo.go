@@ -46,27 +46,12 @@ type Combo struct {
 	Type  ComboType
 	Cards []Card
 	Key   Card
-}
-
-// StraightChecker reports whether five sorted cards form a straight, returning
-// the run's high card.
-type StraightChecker func(sorted []Card) (ok bool, high Card)
-
-// SimpleStraight reports five consecutive ranks. No wrap: 2 is the top rank, so
-// J-Q-K-A-2 is the highest straight and A-2-3-4-5 is not one. Input must be
-// sorted ascending by Order.
-func SimpleStraight(sorted []Card) (bool, Card) {
-	for i := 1; i < len(sorted); i++ {
-		if sorted[i].Rank != sorted[i-1].Rank+1 {
-			return false, Card{}
-		}
-	}
-	return true, sorted[len(sorted)-1]
+	srank int // straight / straight-flush comparison rank, set by Classify
 }
 
 // Classify returns the combo formed by cards, or an error if they aren't a legal
-// play. sc selects the straight variant.
-func Classify(cards []Card, sc StraightChecker) (Combo, error) {
+// play. r selects the straight and flush variants.
+func Classify(cards []Card, r Rules) (Combo, error) {
 	if len(cards) == 0 {
 		return Combo{}, ErrEmptyPlay
 	}
@@ -91,22 +76,22 @@ func Classify(cards []Card, sc StraightChecker) (Combo, error) {
 		}
 		return Combo{Type: Triple, Cards: cs, Key: cs[2]}, nil
 	case 5:
-		return classifyFive(cs, sc)
+		return classifyFive(cs, r)
 	default:
 		return Combo{}, ErrBadSize
 	}
 }
 
 // classifyFive detects the five-card category, testing most-specific first.
-func classifyFive(cs []Card, sc StraightChecker) (Combo, error) {
+func classifyFive(cs []Card, r Rules) (Combo, error) {
 	flush := sameSuit(cs)
-	straight, high := sc(cs)
+	straight, srank, high := r.straight(cs)
 	if straight && flush {
-		return Combo{Type: StraightFlush, Cards: cs, Key: high}, nil
+		return Combo{Type: StraightFlush, Cards: cs, Key: high, srank: srank}, nil
 	}
 	counts := rankCounts(cs) // counted once, shared by the checks below
-	if r, ok := nOfAKind(counts, 4); ok {
-		return Combo{Type: FourKind, Cards: cs, Key: Card{Rank: r, Suit: Spade}}, nil
+	if rr, ok := nOfAKind(counts, 4); ok {
+		return Combo{Type: FourKind, Cards: cs, Key: Card{Rank: rr, Suit: Spade}}, nil
 	}
 	if isFullHouse(counts) {
 		return Combo{Type: FullHouse, Cards: cs, Key: Card{Rank: tripleRank(counts), Suit: Spade}}, nil
@@ -115,13 +100,13 @@ func classifyFive(cs []Card, sc StraightChecker) (Combo, error) {
 		return Combo{Type: Flush, Cards: cs, Key: cs[4]}, nil
 	}
 	if straight {
-		return Combo{Type: Straight, Cards: cs, Key: high}, nil
+		return Combo{Type: Straight, Cards: cs, Key: high, srank: srank}, nil
 	}
 	return Combo{}, ErrNoFiveCombo
 }
 
-// Beats reports whether a strictly beats b. Mismatched sizes never compare.
-func (a Combo) Beats(b Combo) bool {
+// Beats reports whether a strictly beats b under r. Mismatched sizes never compare.
+func (a Combo) Beats(b Combo, r Rules) bool {
 	if len(a.Cards) != len(b.Cards) {
 		return false
 	}
@@ -140,18 +125,12 @@ func (a Combo) Beats(b Combo) bool {
 		}
 		switch a.Type {
 		case Flush:
-			// rank-first: highest card down, then the top card's suit.
-			for i := 4; i >= 0; i-- {
-				if a.Cards[i].Rank != b.Cards[i].Rank {
-					return a.Cards[i].Rank > b.Cards[i].Rank
-				}
-			}
-			return a.Cards[4].Suit > b.Cards[4].Suit
+			return flushBeats(a.Cards, b.Cards, r.Flush)
 		case FullHouse, FourKind:
 			return a.Key.Rank > b.Key.Rank
 		default: // Straight, StraightFlush
-			if a.Key.Rank != b.Key.Rank {
-				return a.Key.Rank > b.Key.Rank
+			if a.srank != b.srank {
+				return a.srank > b.srank
 			}
 			return a.Key.Suit > b.Key.Suit
 		}

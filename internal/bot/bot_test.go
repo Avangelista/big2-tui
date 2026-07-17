@@ -21,10 +21,10 @@ func mustCards(t *testing.T, s string) []game.Card {
 // with the leader (seat 1) holding leaderCards so leaderThreatening is testable.
 func followGame(t *testing.T, hand0, table, leaderCards string) *game.GameState {
 	t.Helper()
-	g := game.NewGame(2, nil) // firstPlay defaults to false, so no open-card rule
+	g := game.NewGame(2, game.DefaultRules()) // firstPlay defaults to false, so no open-card rule
 	g.Hands[0] = mustCards(t, hand0)
 	g.Hands[1] = mustCards(t, leaderCards)
-	tbl, err := game.Classify(mustCards(t, table), game.SimpleStraight)
+	tbl, err := game.Classify(mustCards(t, table), game.DefaultRules())
 	if err != nil {
 		t.Fatalf("classify table %q: %v", table, err)
 	}
@@ -72,7 +72,7 @@ func TestChooseMoveSpendsBombWhenLeaderThreatens(t *testing.T) {
 func TestChooseMovePlaysFullGame(t *testing.T) {
 	for seed := int64(1); seed <= 60; seed++ {
 		rng := rand.New(rand.NewSource(seed))
-		g := game.NewGame(4, nil)
+		g := game.NewGame(4, game.DefaultRules())
 		if err := g.Deal(rng); err != nil {
 			t.Fatalf("seed %d: deal: %v", seed, err)
 		}

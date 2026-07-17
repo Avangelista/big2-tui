@@ -132,9 +132,9 @@ func TestDisconnectedTrickWinHeld(t *testing.T) {
 		}
 		played := false
 		if len(snap.Table) == 1 {
-			tbl, _ := game.Classify(snap.Table, game.SimpleStraight)
+			tbl, _ := game.Classify(snap.Table, game.DefaultRules())
 			for _, c := range hand {
-				if cc, _ := game.Classify([]game.Card{c}, game.SimpleStraight); cc.Beats(tbl) {
+				if cc, _ := game.Classify([]game.Card{c}, game.DefaultRules()); cc.Beats(tbl, game.DefaultRules()) {
 					r.Submit(PlayCmd{ID: a, Cards: []game.Card{c}})
 					played = true
 					break
@@ -302,10 +302,10 @@ func humanDumbMove(r *Room, id string, snap protocol.StateSnapshot) {
 		return
 	}
 	if len(snap.Table) == 1 {
-		tbl, _ := game.Classify(snap.Table, game.SimpleStraight)
+		tbl, _ := game.Classify(snap.Table, game.DefaultRules())
 		for _, c := range hand {
-			cc, _ := game.Classify([]game.Card{c}, game.SimpleStraight)
-			if cc.Beats(tbl) {
+			cc, _ := game.Classify([]game.Card{c}, game.DefaultRules())
+			if cc.Beats(tbl, game.DefaultRules()) {
 				r.Submit(PlayCmd{ID: id, Cards: []game.Card{c}})
 				return
 			}

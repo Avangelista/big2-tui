@@ -20,10 +20,11 @@ func ChooseMove(g *game.GameState, seat game.Seat) Move {
 	if len(plays) == 0 {
 		return Move{Pass: true}
 	}
+	r := g.Rules()
 	endgame := len(g.Hands[seat]) <= 5
 
 	if g.Table != nil { // following
-		best := cheapest(plays)
+		best := cheapest(plays, r)
 		if !endgame && isPremium(best) && !leaderThreatening(g) {
 			return Move{Pass: true} // save the power card; this trick isn't worth it
 		}
@@ -32,33 +33,33 @@ func ChooseMove(g *game.GameState, seat game.Seat) Move {
 
 	// Leading.
 	if endgame {
-		return Move{Cards: mostCards(plays).Cards} // empty out as fast as possible
+		return Move{Cards: mostCards(plays, r).Cards} // empty out as fast as possible
 	}
-	return Move{Cards: cheapest(plays).Cards} // shed the lowest single (never a lone 2 here)
+	return Move{Cards: cheapest(plays, r).Cards} // shed the lowest single (never a lone 2 here)
 }
 
 // weaker orders by fewest cards, then by strength.
-func weaker(a, b game.Combo) bool {
+func weaker(a, b game.Combo, r game.Rules) bool {
 	if len(a.Cards) != len(b.Cards) {
 		return len(a.Cards) < len(b.Cards)
 	}
-	return b.Beats(a)
+	return b.Beats(a, r)
 }
 
-func cheapest(plays []game.Combo) game.Combo {
+func cheapest(plays []game.Combo, r game.Rules) game.Combo {
 	best := plays[0]
 	for _, p := range plays[1:] {
-		if weaker(p, best) {
+		if weaker(p, best, r) {
 			best = p
 		}
 	}
 	return best
 }
 
-func mostCards(plays []game.Combo) game.Combo {
+func mostCards(plays []game.Combo, r game.Rules) game.Combo {
 	best := plays[0]
 	for _, p := range plays[1:] {
-		if len(p.Cards) > len(best.Cards) || (len(p.Cards) == len(best.Cards) && weaker(p, best)) {
+		if len(p.Cards) > len(best.Cards) || (len(p.Cards) == len(best.Cards) && weaker(p, best, r)) {
 			best = p
 		}
 	}

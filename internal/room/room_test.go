@@ -97,11 +97,11 @@ func playOutHand(t *testing.T, r *Room, ids []string) {
 			continue
 		}
 		if len(view.Table) == 1 {
-			tbl, _ := game.Classify(view.Table, game.SimpleStraight)
+			tbl, _ := game.Classify(view.Table, game.DefaultRules())
 			played := false
 			for _, c := range hand {
-				cc, _ := game.Classify([]game.Card{c}, game.SimpleStraight)
-				if cc.Beats(tbl) {
+				cc, _ := game.Classify([]game.Card{c}, game.DefaultRules())
+				if cc.Beats(tbl, game.DefaultRules()) {
 					r.Submit(PlayCmd{ID: turnID, Cards: []game.Card{c}})
 					played = true
 					break
@@ -249,11 +249,11 @@ func TestMultiDisconnectAutoAdvance(t *testing.T) {
 			continue
 		}
 		if len(view.Table) == 1 {
-			tbl, _ := game.Classify(view.Table, game.SimpleStraight)
+			tbl, _ := game.Classify(view.Table, game.DefaultRules())
 			played := false
 			for _, c := range hand {
-				cc, _ := game.Classify([]game.Card{c}, game.SimpleStraight)
-				if cc.Beats(tbl) {
+				cc, _ := game.Classify([]game.Card{c}, game.DefaultRules())
+				if cc.Beats(tbl, game.DefaultRules()) {
 					r.Submit(PlayCmd{ID: turnID, Cards: []game.Card{c}})
 					played = true
 					break

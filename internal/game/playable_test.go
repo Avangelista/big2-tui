@@ -18,7 +18,7 @@ func mustCards(t *testing.T, s string) []Card {
 
 // playableStr returns the space-joined, sorted set of hand cards reported playable.
 func playableStr(hand, selected, table []Card, opening bool, openCard Card) string {
-	ps := PlayableSet(hand, selected, table, opening, openCard)
+	ps := PlayableSet(hand, selected, table, opening, openCard, DefaultRules())
 	var out []string
 	for i, c := range hand {
 		if ps[i] {

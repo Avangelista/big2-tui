@@ -16,7 +16,7 @@ func cards(t *testing.T, s string) []Card {
 
 func mustClassify(t *testing.T, s string) Combo {
 	t.Helper()
-	c, err := Classify(cards(t, s), SimpleStraight)
+	c, err := Classify(cards(t, s), DefaultRules())
 	if err != nil {
 		t.Fatalf("Classify(%q): %v", s, err)
 	}
@@ -68,7 +68,7 @@ func TestClassifyInvalid(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Classify(cards(t, tc.in), SimpleStraight)
+			_, err := Classify(cards(t, tc.in), DefaultRules())
 			if !errors.Is(err, tc.want) {
 				t.Errorf("Classify(%q) err = %v, want %v", tc.in, err, tc.want)
 			}
@@ -118,7 +118,7 @@ func TestBeats(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			a := mustClassify(t, tc.a)
 			b := mustClassify(t, tc.b)
-			if got := a.Beats(b); got != tc.want {
+			if got := a.Beats(b, DefaultRules()); got != tc.want {
 				t.Errorf("(%q).Beats(%q) = %v, want %v", tc.a, tc.b, got, tc.want)
 			}
 		})
@@ -155,10 +155,10 @@ func TestBeatsStrictlyIncreasing(t *testing.T) {
 			for j := i + 1; j < len(g); j++ {
 				lo := mustClassify(t, g[i])
 				hi := mustClassify(t, g[j])
-				if !hi.Beats(lo) {
+				if !hi.Beats(lo, DefaultRules()) {
 					t.Errorf("%q should beat %q", g[j], g[i])
 				}
-				if lo.Beats(hi) {
+				if lo.Beats(hi, DefaultRules()) {
 					t.Errorf("%q should NOT beat %q", g[i], g[j])
 				}
 			}
