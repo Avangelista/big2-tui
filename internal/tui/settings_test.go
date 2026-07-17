@@ -153,6 +153,60 @@ func TestSettingsSelectedValueReflectsSnapshot(t *testing.T) {
 	}
 }
 
+// contentTopLeft returns the row of the first non-blank line and the smallest left indent
+// among non-blank lines: the top-left corner of the rendered content on screen.
+func contentTopLeft(frame string) [2]int {
+	lines := strings.Split(frame, "\n")
+	top, left := -1, 1<<30
+	for i, ln := range lines {
+		if strings.TrimRight(ln, " ") == "" {
+			continue
+		}
+		if top < 0 {
+			top = i
+		}
+		if indent := len(ln) - len(strings.TrimLeft(ln, " ")); indent < left {
+			left = indent
+		}
+	}
+	return [2]int{top, left}
+}
+
+// TestSettingsNoLayoutShift: the settings box is a fixed size, so switching tabs, editing
+// a label, or cycling a rule value never moves the page on screen. We assert the content's
+// top-left corner is identical across all those states.
+func TestSettingsNoLayoutShift(t *testing.T) {
+	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	m.Update(protocol.StateSnapshotMsg{Snap: waitingSnap(true)})
+	m.Update(runeKey('~')) // open on the rules tab
+
+	want := contentTopLeft(stripStyling(m.View()))
+	check := func(label string) {
+		if got := contentTopLeft(stripStyling(m.View())); got != want {
+			t.Errorf("%s shifted the page: top-left %v, want %v", label, got, want)
+		}
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRight}) // cycle a rule value
+	check("rule cycled")
+	m.Update(tea.KeyMsg{Type: tea.KeyTab}) // to the reactions tab
+	check("reactions tab")
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // begin editing (buffer pre-filled)
+	check("edit begun")
+	for range protocol.Emotes[0] {
+		m.Update(tea.KeyMsg{Type: tea.KeyBackspace}) // clear to empty
+	}
+	check("edit cleared")
+	for _, r := range "abcde" {
+		m.Update(runeKey(r)) // fill to the length cap
+	}
+	check("edit full")
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc}) // cancel edit
+	m.Update(tea.KeyMsg{Type: tea.KeyTab}) // back to rules
+	check("back to rules")
+}
+
 func TestSettingsEditReaction(t *testing.T) {
 	cc := &captureCommander{}
 	m := openSettingsModel(t, cc)

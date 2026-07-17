@@ -220,21 +220,60 @@ func (m *Model) keyReactionEdit(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 // renderSettings draws the active settings tab (rules or reactions) with a tab header
 // and a context legend.
 func (m *Model) renderSettings() string {
+	// Render the active tab into a fixed-size box, then centre the box. The box's size
+	// depends only on the static rule/reaction shapes (see settingsBox), never on which
+	// tab is active, whether a label is being edited, or which option is selected - so
+	// none of those actions re-centre the page and shift it.
+	w, h := m.settingsBox()
+	body := m.settingsBody(m.settingsPage, m.editing)
+	return m.center(m.r.NewStyle().Width(w).Height(h).Render(body))
+}
+
+// settingsBody renders a settings tab in full: the tab header, the page content, and the
+// context legend.
+func (m *Model) settingsBody(page int, editing bool) string {
 	var b strings.Builder
-	b.WriteString(m.settingsTabs() + "\n\n")
-	if m.settingsPage == pageRules {
+	b.WriteString(m.settingsTabs(page) + "\n\n")
+	if page == pageRules {
 		b.WriteString(m.renderRulesPage())
 	} else {
 		b.WriteString(m.renderReactionsPage())
 	}
-	b.WriteString("\n" + m.st.secondary.Render(m.settingsLegend()))
-	return m.centerBlock(b.String())
+	b.WriteString("\n" + m.st.secondary.Render(m.settingsLegend(page, editing)))
+	return b.String()
 }
 
-// settingsTabs is the header showing both tabs with the active one lit.
-func (m *Model) settingsTabs() string {
+// settingsBox is the fixed content-box size (in cells) that holds either tab. Height is
+// the taller tab; width covers the widest line any interaction can produce - every rule
+// option and explainer, every legend variant, the tab header, and the reaction grid -
+// so cycling a value or editing a label can never widen the box.
+func (m *Model) settingsBox() (int, int) {
+	h := max(lipgloss.Height(m.settingsBody(pageRules, false)), lipgloss.Height(m.settingsBody(pageReactions, false)))
+
+	w := lipgloss.Width(m.settingsBody(pageReactions, false)) // fixed-width cells: constant
+	w = max(w, lipgloss.Width(m.settingsTabs(pageRules)))
+	for _, lg := range []string{
+		m.settingsLegend(pageRules, false),
+		m.settingsLegend(pageReactions, false),
+		m.settingsLegend(pageReactions, true),
+	} {
+		for _, ln := range strings.Split(lg, "\n") {
+			w = max(w, lipgloss.Width(ln))
+		}
+	}
+	for _, f := range ruleFields {
+		for i := range f.options {
+			w = max(w, lipgloss.Width(m.ruleNameValue(false, f.name, f.options[i])))
+			w = max(w, lipgloss.Width(m.ruleExplain(f.explains[i])))
+		}
+	}
+	return w, h
+}
+
+// settingsTabs is the header showing both tabs with `page` lit.
+func (m *Model) settingsTabs(page int) string {
 	rules, react := "rules", "reactions"
-	if m.settingsPage == pageRules {
+	if page == pageRules {
 		return m.st.primary.Render(rules) + "   " + m.st.tertiary.Render(react)
 	}
 	return m.st.tertiary.Render(rules) + "   " + m.st.primary.Render(react)
@@ -247,12 +286,20 @@ func (m *Model) renderRulesPage() string {
 	var b strings.Builder
 	for i, f := range ruleFields {
 		sel := f.get(m.snap.Rules)
-		b.WriteString(m.settingsCursor(m.settingsRow == i) +
-			m.st.secondary.Render(fmt.Sprintf("%-11s", f.name)) +
-			m.st.primary.Render(f.options[sel]) + "\n")
-		b.WriteString("    " + m.st.secondary.Render(f.explains[sel]) + "\n")
+		b.WriteString(m.ruleNameValue(m.settingsRow == i, f.name, f.options[sel]) + "\n")
+		b.WriteString(m.ruleExplain(f.explains[sel]) + "\n")
 	}
 	return b.String()
+}
+
+// ruleNameValue renders a rule row's name and current value; ruleExplain the indented
+// explainer line. Shared with the box-width measurement so it covers every option.
+func (m *Model) ruleNameValue(active bool, name, value string) string {
+	return m.settingsCursor(active) + m.st.secondary.Render(fmt.Sprintf("%-11s", name)) + m.st.primary.Render(value)
+}
+
+func (m *Model) ruleExplain(text string) string {
+	return "    " + m.st.secondary.Render(text)
 }
 
 // renderReactionsPage lays the labels out in a fixed 2-column grid (column-major), each
@@ -293,15 +340,15 @@ func (m *Model) settingsCursor(active bool) string {
 	return "  "
 }
 
-// settingsLegend is the context-sensitive help at the foot of the settings page.
-func (m *Model) settingsLegend() string {
-	if m.editing {
+// settingsLegend is the context-sensitive help at the foot of a settings tab.
+func (m *Model) settingsLegend(page int, editing bool) string {
+	if editing {
 		return strings.Join([]string{
 			fmt.Sprintf("type a label (<=%d)", protocol.MaxReactionLen),
 			"enter save  esc cancel",
 		}, "\n")
 	}
-	if m.settingsPage == pageRules {
+	if page == pageRules {
 		return strings.Join([]string{
 			"up/down move  left/right change",
 			"tab reactions  esc back",
