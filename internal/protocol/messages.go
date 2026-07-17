@@ -26,9 +26,17 @@ const (
 // StateSnapshotMsg carries a fresh, per-viewer redacted view of the room.
 type StateSnapshotMsg struct{ Snap StateSnapshot }
 
-// Emotes are the fixed quick-chat phrases a player can send, indexed by the Code in an
-// EmoteMsg. Kept short (<=5 cols) so each sits beside a player's label.
+// Emotes are the default quick-chat phrases, indexed by the Code in an EmoteMsg. A
+// host can override the labels room-wide (see StateSnapshot.Reactions); the count and
+// key bindings stay fixed. Kept short (<=MaxReactionLen cols) so each sits beside a
+// player's label.
 var Emotes = []string{"bro", "lol", "why", "gg", "play", "low", "high", "dubs", "trips", "five", "f you", "ty"}
+
+// MaxReactionLen caps a host-set reaction label (in runes).
+const MaxReactionLen = 5
+
+// DefaultReactions returns a fresh, mutable copy of the default reaction labels.
+func DefaultReactions() []string { return append([]string(nil), Emotes...) }
 
 // EmoteMsg broadcasts a quick-chat reaction from Seat to every session; the client
 // flashes Emotes[Code] beside that seat for a beat. Public - never redacted.
@@ -66,6 +74,9 @@ type StateSnapshot struct {
 
 	Opening  bool      // your play must include OpenCard (the hand's first play)
 	OpenCard game.Card // the mandatory opening card, valid only when Opening
+
+	Rules     game.Rules // active house ruleset (drives client highlighting and the host settings page)
+	Reactions []string   // room-wide reaction labels, indexed by EmoteMsg.Code
 }
 
 // PlayerView is the redacted, public view of one seat.

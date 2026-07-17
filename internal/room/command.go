@@ -60,21 +60,38 @@ type DisconnectCmd struct{ ID string }
 // QuitCmd is a graceful leave (player pressed quit).
 type QuitCmd struct{ ID string }
 
-// EmoteCmd is a quick-chat reaction: Code indexes protocol.Emotes.
+// EmoteCmd is a quick-chat reaction: Code indexes the room's reaction labels.
 type EmoteCmd struct {
 	ID   string
 	Code int
 }
 
-func (JoinCmd) isCmd()       {}
-func (StartCmd) isCmd()      {}
-func (PlayCmd) isCmd()       {}
-func (PassCmd) isCmd()       {}
-func (NextHandCmd) isCmd()   {}
-func (DisconnectCmd) isCmd() {}
-func (QuitCmd) isCmd()       {}
-func (SetLetterCmd) isCmd()  {}
-func (AddBotCmd) isCmd()     {}
-func (RemoveBotCmd) isCmd()  {}
-func (BotActCmd) isCmd()     {}
-func (EmoteCmd) isCmd()      {}
+// SetRulesCmd (host only, waiting room) replaces the house ruleset used for the next
+// hand. Ignored once a game is in progress.
+type SetRulesCmd struct {
+	ID    string
+	Rules game.Rules
+}
+
+// SetReactionCmd (host only, waiting room) sets reaction label Index to Text
+// (<=protocol.MaxReactionLen runes), room-wide. Ignored once a game is in progress.
+type SetReactionCmd struct {
+	ID    string
+	Index int
+	Text  string
+}
+
+func (JoinCmd) isCmd()        {}
+func (StartCmd) isCmd()       {}
+func (PlayCmd) isCmd()        {}
+func (PassCmd) isCmd()        {}
+func (NextHandCmd) isCmd()    {}
+func (DisconnectCmd) isCmd()  {}
+func (QuitCmd) isCmd()        {}
+func (SetLetterCmd) isCmd()   {}
+func (AddBotCmd) isCmd()      {}
+func (RemoveBotCmd) isCmd()   {}
+func (BotActCmd) isCmd()      {}
+func (EmoteCmd) isCmd()       {}
+func (SetRulesCmd) isCmd()    {}
+func (SetReactionCmd) isCmd() {}

@@ -8,7 +8,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	mrand "math/rand"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -39,13 +41,16 @@ type Room struct {
 	trickDelay time.Duration // how long a won trick is held on screen before it clears
 
 	// actor-owned state (only touched inside run):
-	seats       []*Seat
-	game        *game.GameState
-	phase       protocol.Phase
-	rev         int          // monotonic snapshot revision; lets clients drop out-of-order sends
-	turnToken   int          // bumped whenever a bot is scheduled; invalidates stale timers
-	trickToken  int          // bumped whenever a trick hold is scheduled; invalidates stale timers
-	trickReveal *trickReveal // set while a won trick is held on screen before it clears
+	seats        []*Seat
+	game         *game.GameState
+	phase        protocol.Phase
+	rules        game.Rules   // host-configured house rules; applied to each hand
+	reactions    []string     // room-wide reaction labels (host-configurable)
+	lastWinnerID string       // winner of the previous hand, for the winner-leads rule
+	rev          int          // monotonic snapshot revision; lets clients drop out-of-order sends
+	turnToken    int          // bumped whenever a bot is scheduled; invalidates stale timers
+	trickToken   int          // bumped whenever a trick hold is scheduled; invalidates stale timers
+	trickReveal  *trickReveal // set while a won trick is held on screen before it clears
 }
 
 // trickReveal is the just-completed trick, held briefly so the winning card and the
@@ -65,6 +70,7 @@ func New(maxSeats, minStart int, rng *mrand.Rand) *Room {
 		minStart:   minStart,
 		rng:        rng,
 		phase:      protocol.Waiting,
+		reactions:  protocol.DefaultReactions(),
 		botDelay:   time.Second,
 		trickDelay: protocol.RevealHold,
 	}
@@ -114,6 +120,10 @@ func (r *Room) run() {
 			r.handleLeave(cmd.ID)
 		case EmoteCmd:
 			r.handleEmote(cmd)
+		case SetRulesCmd:
+			r.handleSetRules(cmd)
+		case SetReactionCmd:
+			r.handleSetReaction(cmd)
 		case queryCmd:
 			if idx := r.seatIndexByID(cmd.id); idx >= 0 {
 				cmd.reply <- r.snapshotFor(idx)
@@ -195,10 +205,17 @@ func (r *Room) handleStart(c StartCmd) {
 }
 
 func (r *Room) startGame() {
-	r.game = game.NewGame(len(r.seats), game.DefaultRules())
+	r.game = game.NewGame(len(r.seats), r.rules)
 	if err := r.game.Deal(r.rng); err != nil {
 		safeSendAll(r.seats, protocol.ErrorMsg{Text: "failed to deal: " + err.Error()})
 		return
+	}
+	// Winner-leads: the previous hand's winner opens the next one freely. The first
+	// hand of a match (no prior winner) always opens on the 3D.
+	if r.rules.Lead == game.LeadWinner {
+		if idx := r.seatIndexByID(r.lastWinnerID); idx >= 0 {
+			r.game.LeadFrom(game.Seat(idx))
+		}
 	}
 	r.phase = protocol.InGame
 	r.turnToken++ // fresh hand: any leftover bot timer can't match
@@ -581,6 +598,9 @@ func (r *Room) handleGameWon() {
 	for i := range r.seats {
 		r.seats[i].Score += scores[i]
 	}
+	if w := int(r.game.Winner); w >= 0 && w < len(r.seats) {
+		r.lastWinnerID = r.seats[w].ID // remembered for the winner-leads rule next hand
+	}
 	r.phase = protocol.Finished
 }
 
@@ -593,10 +613,40 @@ func (r *Room) handleEmote(c EmoteCmd) {
 		return // reactions live during a hand and on the score screen
 	}
 	idx := r.seatIndexByID(c.ID)
-	if idx < 0 || c.Code < 0 || c.Code >= len(protocol.Emotes) {
+	if idx < 0 || c.Code < 0 || c.Code >= len(r.reactions) {
 		return
 	}
 	safeSendAll(r.seats, protocol.EmoteMsg{Seat: idx, Code: c.Code})
+}
+
+// handleSetRules replaces the house ruleset (host only, waiting room). Locked once a
+// game is in progress so the rules can't shift mid-match.
+func (r *Room) handleSetRules(c SetRulesCmd) {
+	s := r.seatByID(c.ID)
+	if s == nil || !s.Host || r.phase != protocol.Waiting {
+		return
+	}
+	r.rules = c.Rules
+	r.fanout()
+}
+
+// handleSetReaction sets one reaction label room-wide (host only, waiting room). An
+// empty or too-long label is rejected; the client is snapped back to the truth.
+func (r *Room) handleSetReaction(c SetReactionCmd) {
+	s := r.seatByID(c.ID)
+	if s == nil || !s.Host || r.phase != protocol.Waiting {
+		return
+	}
+	if c.Index < 0 || c.Index >= len(r.reactions) {
+		return
+	}
+	text := strings.TrimSpace(c.Text)
+	if text == "" || utf8.RuneCountInString(text) > protocol.MaxReactionLen {
+		r.fanout()
+		return
+	}
+	r.reactions[c.Index] = text
+	r.fanout()
 }
 
 func (r *Room) fanout() {
@@ -637,16 +687,18 @@ func (r *Room) snapshotFor(viewer int) protocol.StateSnapshot {
 		players[i] = pv
 	}
 	snap := protocol.StateSnapshot{
-		Phase:    r.phase,
-		Rev:      r.rev,
-		YouSeat:  viewer,
-		IsHost:   r.seats[viewer].Host,
-		MaxSeats: r.maxSeats,
-		MinStart: r.minStart,
-		Players:  players,
-		Turn:     -1,
-		TableBy:  -1,
-		Winner:   -1,
+		Phase:     r.phase,
+		Rev:       r.rev,
+		YouSeat:   viewer,
+		IsHost:    r.seats[viewer].Host,
+		MaxSeats:  r.maxSeats,
+		MinStart:  r.minStart,
+		Players:   players,
+		Turn:      -1,
+		TableBy:   -1,
+		Winner:    -1,
+		Rules:     r.rules,
+		Reactions: append([]string(nil), r.reactions...),
 	}
 	if r.game != nil {
 		snap.YourHand = append([]game.Card(nil), r.game.Hands[viewer]...)
