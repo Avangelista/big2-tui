@@ -41,11 +41,44 @@ func openSettingsModel(t *testing.T, cc commander) *Model {
 
 func TestSettingsOpenAndRender(t *testing.T) {
 	m := openSettingsModel(t, nopCommander{})
+	// The rules tab opens first: tab header, rule names, and an explainer.
 	frame := stripStyling(m.View())
-	for _, want := range []string{"settings", "straights", "flushes", "passing", "first play", protocol.Emotes[0]} {
+	for _, want := range []string{"rules", "reactions", "straights", "flushes", "passing", "first play"} {
 		if !strings.Contains(frame, want) {
-			t.Errorf("settings frame missing %q", want)
+			t.Errorf("rules page missing %q", want)
 		}
+	}
+	if strings.Contains(frame, protocol.Emotes[0]) {
+		t.Error("reaction labels belong on the reactions tab, not the rules tab")
+	}
+	// The reactions tab shows the labels.
+	m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.settingsPage != pageReactions {
+		t.Fatal("tab should switch to the reactions page")
+	}
+	if frame = stripStyling(m.View()); !strings.Contains(frame, protocol.Emotes[0]) {
+		t.Errorf("reactions page missing label %q", protocol.Emotes[0])
+	}
+}
+
+// TestSettingsPagesFitMinSize: both tabs render within the minimum terminal, so nothing
+// overflows the width (which would shear) or the height (which would clip).
+func TestSettingsPagesFitMinSize(t *testing.T) {
+	m := New(nopCommander{}, "id", "hint", lipgloss.DefaultRenderer())
+	m.Update(tea.WindowSizeMsg{Width: minW, Height: minH}) // the minimum size
+	m.Update(protocol.StateSnapshotMsg{Snap: waitingSnap(true)})
+	m.Update(runeKey('o'))
+	for _, page := range []string{"rules", "reactions"} {
+		lines := strings.Split(strings.TrimRight(stripStyling(m.View()), "\n"), "\n")
+		if len(lines) > minH {
+			t.Errorf("%s page renders %d lines, over the %d-row minimum", page, len(lines), minH)
+		}
+		for _, ln := range lines {
+			if w := lipgloss.Width(ln); w > minW {
+				t.Errorf("%s page line %q is %d cols, over the %d-col minimum", page, ln, w, minW)
+			}
+		}
+		m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	}
 }
 
@@ -104,13 +137,10 @@ func TestSettingsEditReaction(t *testing.T) {
 	cc := &captureCommander{}
 	m := openSettingsModel(t, cc)
 
-	// Move to the first reaction row (rows 0-3 are rules).
-	for i := 0; i < len(ruleFields); i++ {
-		m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	}
+	m.Update(tea.KeyMsg{Type: tea.KeyTab})   // to the reactions page (cursor on reaction 0)
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // begin editing
 	if !m.editing {
-		t.Fatal("enter on a reaction row should start editing")
+		t.Fatal("enter on a reaction should start editing")
 	}
 	// The buffer pre-fills with the current label; clear it, then type a new one.
 	for range protocol.Emotes[0] {
@@ -131,9 +161,7 @@ func TestSettingsEditReaction(t *testing.T) {
 func TestSettingsEditCapAndCancel(t *testing.T) {
 	cc := &captureCommander{}
 	m := openSettingsModel(t, cc)
-	for i := 0; i < len(ruleFields); i++ {
-		m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	}
+	m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	for range protocol.Emotes[0] {
 		m.Update(tea.KeyMsg{Type: tea.KeyBackspace})

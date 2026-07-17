@@ -93,14 +93,14 @@ func renderPile(title string, w, h int, base protocol.StateSnapshot, plays []str
 }
 
 // renderSettings opens the host settings page (o from the waiting room) and prints it,
-// with the cursor moved down `down` rows so a rule row shows its adjustable state.
-func renderSettings(title string, w, h int, snap protocol.StateSnapshot, down int) {
+// after feeding any extra keys (e.g. tab to the reactions tab, arrows to move).
+func renderSettings(title string, w, h int, snap protocol.StateSnapshot, keys ...tea.KeyMsg) {
 	m := tui.New(noopCommander{}, "rory", "ssh -p 2222 192.168.1.20", lipgloss.DefaultRenderer())
 	m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	m.Update(protocol.StateSnapshotMsg{Snap: snap})
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}}) // open the settings page
-	for range down {
-		m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	for _, k := range keys {
+		m.Update(k)
 	}
 	fmt.Printf("\n===== %s (%dx%d) =====\n", title, w, h)
 	fmt.Println(strings.Repeat("-", w))
@@ -179,11 +179,13 @@ func main() {
 	render("waiting room (host, 3 joined)", 80, 24, waiting, 0, "")
 	render("waiting room (34 wide)", 34, 18, waiting, 0, "")
 
-	// Host settings page: a non-default ruleset, cursor on a rule row.
+	// Host settings page: both tabs, shown at the minimum size so the fit is visible.
 	settings := waiting
 	settings.Reactions = protocol.DefaultReactions()
 	settings.Rules = game.Rules{Straights: game.StraightsPoker, Flush: game.FlushBySuit, Pass: game.PassReenter, Lead: game.LeadWinner}
-	renderSettings("host settings page (rule row active)", 60, 26, settings, 1)
+	renderSettings("settings: rules (min size)", 34, 14, settings, tea.KeyMsg{Type: tea.KeyDown})
+	renderSettings("settings: reactions (min size)", 34, 14, settings, tea.KeyMsg{Type: tea.KeyTab})
+	renderSettings("settings: rules (roomy)", 60, 24, settings)
 
 	// Waiting room with chosen letters and a bot seated.
 	withBots := protocol.StateSnapshot{

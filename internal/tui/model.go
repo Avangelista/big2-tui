@@ -56,7 +56,8 @@ type Model struct {
 	emoteGen    int                // bumped per reaction so a stale timer can't clear a newer one
 
 	settingsOpen bool   // the host's settings page is showing (waiting room only)
-	settingsRow  int    // cursor row on the settings page (rule rows then reaction rows)
+	settingsPage int    // which settings tab: pageRules or pageReactions
+	settingsRow  int    // cursor index within the active settings tab
 	editing      bool   // a reaction label is being edited inline
 	editBuf      string // the label being typed while editing
 
