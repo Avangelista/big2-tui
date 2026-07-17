@@ -98,7 +98,7 @@ func renderSettings(title string, w, h int, snap protocol.StateSnapshot, keys ..
 	m := tui.New(noopCommander{}, "rory", "ssh -p 2222 192.168.1.20", lipgloss.DefaultRenderer())
 	m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	m.Update(protocol.StateSnapshotMsg{Snap: snap})
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}}) // open the settings page
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'~'}}) // open the settings page
 	for _, k := range keys {
 		m.Update(k)
 	}

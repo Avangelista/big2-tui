@@ -38,7 +38,7 @@ Headless (no local host, so the first person to connect becomes host):
 ## Controls
 
 **Waiting room:** `a`-`z` pick your letter, `enter` start (host), `+`/`-` add/remove
-a bot (host, always full strength), `o` house-rules settings (host), `esc` quit.
+a bot (host, always full strength), `~` house-rules settings (host), `esc` quit.
 
 **In-game:** `←`/`→` move the cursor (or scroll your hand when it isn't your turn),
 `space` select/deselect, `enter` play the selection (or the card under the cursor if
@@ -63,7 +63,7 @@ On your turn only the cards you can legally play stay lit; the cursor skips the 
 
 ### House rules
 
-The host mixes these on the settings page (`o` in the waiting room) before starting;
+The host mixes these on the settings page (`~` in the waiting room) before starting;
 the defaults reproduce the classic game, and the choice is locked once a hand begins.
 
 - **Straights.** *big 2* (default): rank order topping out at 2, highest `J-Q-K-A-2`,

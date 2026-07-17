@@ -32,9 +32,9 @@ func openSettingsModel(t *testing.T, cc commander) *Model {
 	m := New(cc, "id", "hint", lipgloss.DefaultRenderer())
 	m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
 	m.Update(protocol.StateSnapshotMsg{Snap: waitingSnap(true)})
-	m.Update(runeKey('o'))
+	m.Update(runeKey('~'))
 	if !m.settingsOpen {
-		t.Fatal("host 'o' should open the settings page")
+		t.Fatal("host '~' should open the settings page")
 	}
 	return m
 }
@@ -82,18 +82,27 @@ func TestSettingsPagesFitMinSize(t *testing.T) {
 	}
 }
 
-func TestSettingsNonHostCannotOpen(t *testing.T) {
+func TestSettingsOpenKey(t *testing.T) {
+	// '~' opens the page for the host only.
 	cc := &captureCommander{}
-	m := New(cc, "id", "hint", lipgloss.DefaultRenderer())
-	m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
-	m.Update(protocol.StateSnapshotMsg{Snap: waitingSnap(false)})
-	m.Update(runeKey('o'))
-	if m.settingsOpen {
+	nonHost := New(cc, "id", "hint", lipgloss.DefaultRenderer())
+	nonHost.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	nonHost.Update(protocol.StateSnapshotMsg{Snap: waitingSnap(false)})
+	nonHost.Update(runeKey('~'))
+	if nonHost.settingsOpen {
 		t.Fatal("a non-host must not open the settings page")
 	}
-	// For a non-host, 'o' is just a letter pick.
+
+	// 'o' is now a free letter choice, not a settings shortcut, even for the host.
+	host := New(cc, "id", "hint", lipgloss.DefaultRenderer())
+	host.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	host.Update(protocol.StateSnapshotMsg{Snap: waitingSnap(true)})
+	host.Update(runeKey('o'))
+	if host.settingsOpen {
+		t.Fatal("'o' should pick a letter, not open settings")
+	}
 	if lc, ok := cc.last().(room.SetLetterCmd); !ok || lc.Letter != 'o' {
-		t.Fatalf("non-host 'o' should submit SetLetterCmd 'o', got %#v", cc.last())
+		t.Fatalf("host 'o' should submit SetLetterCmd 'o', got %#v", cc.last())
 	}
 }
 
